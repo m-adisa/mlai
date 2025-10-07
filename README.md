@@ -19,6 +19,14 @@ Theoretical foundations and practical classical ML skills
 3. [Microsoft Machine Learning course](https://github.com/microsoft/ML-For-Beginners)
 4. [Microsoft Data Science For Beginners](https://github.com/microsoft/Data-Science-For-Beginners)
 
+## Projects
+- Project 1.1: Trade Transaction Anomaly Detector
+    * Detect unusual patterns in order sizes, transaction frequency, or payment behavior
+    * Algorithms: k-means clustering, isolation forest.
+- Project 1.3 – Customer Segmentation
+    * Cluster buyers based on purchase frequency, spend, and category preference.
+    * Algorithms: K-Means, PCA, DBSCAN.
+
 # PHASE 2: Neural Networks & Deep Learning
 
 ## Goal
@@ -31,6 +39,12 @@ Neural networks and deep learning architectures
 4. [Practical Deep Learning](https://course.fast.ai/)
 5. [Deep Learning for Coders with Fastai and PyTorch (GitHub Book)](https://github.com/fastai/fastbook) 
 
+## Projects
+- Project 2.1: Transaction Fraud Detection (NN)
+    * Use MLPs or autoencoders to classify fraudulent vs. normal transactions.
+- Project 2.2: Price Prediction Neural Network
+    * MLP predicting optimal price given product features, competition, demand signals
+    
 # PHASE 3: Time Series Analysis & Forecasting
 
 ## Goal
@@ -43,7 +57,9 @@ Master Time Series data analysis for supply chain forecasting
 
 ## Projects
 - Project 3.1: Multi-Product Demand Forecasting System
-- Project 3.2: Price Prediction & Volatility Modeling
+    * Forecast sales volume by product category, geography, and seasonality.
+- Project 3.2: Shipment Delay Forecasting
+    * Predict delivery delays using route history, customs data, and seasonal congestion.
 
 # PHASE 4: Probabilistic ML & Bayesian Methods
 
@@ -57,10 +73,11 @@ Resources:
 3. [Pattern Recognition and Machine Learning -- Christopher Bishop](https://drive.google.com/file/d/1P30XdaruZNplvG4Ro3uszDREE0at5dud/view?usp=sharing)
 4. [PyMC documentation and tutorials](https://www.pymc.io/projects/docs/en/stable/learn.html)
 
-
 ## Projects
-- Project 4.1: Supplier Risk Scoring System
-- Project 4.2: Fraud Detection with Probabilistic Models
+- Project 4.1: Transaction Fraud Probability with Bayesian Networks
+    * Model fraud probability using Bayesian networks that capture dependencies between transaction features (amount, time, location, merchant, user behavior)
+- Project 4.2: Dynamic Credit Limit Optimization
+    * Set optimal credit limits for B2B buyers using Bayesian models of default risk and business relationships.
 
 # PHASE 5: Graph Neural Networks
 
@@ -73,8 +90,10 @@ Model network relationships in supply chains
 3. [PyTorch Geometric Tutorials](https://pytorch-geometric.readthedocs.io/en/latest/notes/introduction.html)
 
 ## Projects
-- Project 5.1: Supply Chain Network Analysis
+- Project 5.1: Supply Chain Graph Builder
+    * Construct a supplier–buyer–product graph, analyze connectivity, detect bottlenecks.
 - Project 5.2: Fraud Ring Detection
+    * Apply GNNs to detect collusive vendor–buyer–logistics networks.
 
 # PHASE 6: Reinforcement Learning
 
@@ -89,9 +108,10 @@ Sequential decision-making and optimization
 5. [Deep RL Course](https://huggingface.co/learn/deep-rl-course/unit0/introduction)
 
 ## Projects
-Project 4.1: Dynamic Pricing Engine
-Project 4.2: Warehouse Inventory Allocation
-Project 4.3: Logistics Route Optimization
+- Project 6.1: Dynamic Pricing Engine
+    * RL agent adjusting product prices based on competition, demand, and margin.
+- Project 6.2: Warehouse Inventory Allocation
+    * RL agents to optimally distribute inventory across a warehouse network considering demand, costs, and lead times.
 
 # PHASE 7: LLMs & Generative AI
 
@@ -108,8 +128,10 @@ Build modern AI applications with LLMs and generative models
 7. [MCP](https://huggingface.co/learn/mcp-course/unit0/introduction)
 
 ## Projects
-- Project 7.1: Supply Chain Procurement Agent
-- Project 7.2: Multi-Language Customer Support
+- Project 7.1: Multilingual Shopping Assistant
+    * LLM-based chatbot that helps buyers discover products, compare options, and make purchases across languages.
+- Project 7.2: Multilingual Procurement Assistant
+    * LLM assistant that extracts custom procurement requirements, recommends sourcing strategies, and generates RFQs for complex orders.
 
 # PHASE 8: Agentic AI & Multi-Agent Systems
 
@@ -124,7 +146,9 @@ Autonomous AI systems and multi-agent architectures
 
 ## Projects
 - Project 8.1: Document Processing Pipeline
-- Project 8.2: Multi-Agent Procurement System
+    * Chain of agents that collect, parse, and verify trade documents end-to-end.
+- Project 8.2: Supply Chain Disruption Response Agent
+    * Multi-agent system that detects disruptions (e.g., supplier failure) and autonomously reconfigures supply routes.
 
 # PHASE 9: ML Engineering & Production
 
@@ -138,9 +162,10 @@ Design, deploy, and maintain production ML systems
 4. [MLOps Guide](https://mlops-guide.github.io/)
 
 ## Projects
-- Project 9.1: Multi-Model ML Platform
-- Project 9.2: Real-Time ML System
-- Project 9.3: Causal Inference Framework
+- Project 9.1:  Real-Time Feature Store & Model Serving Platform
+    * Build production infrastructure that serves multiple models from prior phases (fraud detection, pricing, demand forecasting) with shared feature computation and low-latency inference.
+- Project 9.2: Model Monitoring & Drift Detection
+    * Build a system that monitors performance and detects data drift across deployed ML models.
 
 
 # SPECIALIZATIONS
