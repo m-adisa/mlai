@@ -86,7 +86,8 @@ Model network relationships in supply chains
 
 ## Resources
 1. [Stanford CS224W: Machine Learning with Graphs (YouTube)](https://www.youtube.com/playlist?list=PLoROMvodv4rPLKxIpqhjhPgdQy7imNkDn)
-2. [Graph Representation Learning -- William L. Hamilton](https://drive.google.com/file/d/16--OIlXQ-0HJy3pCk63HchjNI6YxKfjZ/view?usp=sharing)
+2. [Graph Neural Networks by Vizuara (YouTube)](https://youtube.com/playlist?list=PLPTV0NXA_ZSg4Pimkso0nHxwYMB6IGX7l&si=JV-V2Wl63X8YQn6Y)
+3. [Graph Representation Learning -- William L. Hamilton](https://drive.google.com/file/d/16--OIlXQ-0HJy3pCk63HchjNI6YxKfjZ/view?usp=sharing)
 3. [PyTorch Geometric Tutorials](https://pytorch-geometric.readthedocs.io/en/latest/notes/introduction.html)
 
 ## Projects
@@ -142,7 +143,8 @@ Autonomous AI systems and multi-agent architectures
 1. [Microsoft AI Agents for Beginners](https://github.com/microsoft/ai-agents-for-beginners)
 2. [Agents Course](https://huggingface.co/learn/agents-course/en/unit0/introduction)
 3. [LangChain Documentation](https://python.langchain.com/docs/tutorials/)
-4. [Building LLM Agents by Vizuara (YouTube)](https://www.youtube.com/watch?v=WNAkSAuhYhw)
+4. [Building LLM Agents by Vizuara (YouTube)](https://youtube.com/playlist?list=PLPTV0NXA_ZShaG9NCxtEPGI_37oTd89C5&si=6OqDmr10MH-4hNNU)
+5. [RAG Workshop by Vizuara (YouTube)](https://youtube.com/playlist?list=PLPTV0NXA_ZSgZdinC6o6dF_p8LQqz8vqq&si=3fdpEA-UMf7wa0fv)
 
 ## Projects
 - Project 8.1: Document Processing Pipeline
