@@ -44,24 +44,8 @@ Neural networks and deep learning architectures
     * Use MLPs or autoencoders to classify fraudulent vs. normal transactions.
 - Project 2.2: Price Prediction Neural Network
     * MLP predicting optimal price given product features, competition, demand signals
-    
-# PHASE 3: Time Series Analysis & Forecasting
 
-## Goal
-Master Time Series data analysis for supply chain forecasting
-
-## Resources
-1. [Forecasting: Principles and Practice, the Pythonic Way](https://otexts.com/fpppy/)
-2. [Time series analysis with Python](https://filippomb.github.io/python-time-series-handbook/notebooks/00/intro.html)
-3. [Kaggle Time Series Course](https://www.kaggle.com/learn/time-series)
-
-## Projects
-- Project 3.1: Multi-Product Demand Forecasting System
-    * Forecast sales volume by product category, geography, and seasonality.
-- Project 3.2: Shipment Delay Forecasting
-    * Predict delivery delays using route history, customs data, and seasonal congestion.
-
-# PHASE 4: Probabilistic ML & Bayesian Methods
+# PHASE 3: Probabilistic ML & Bayesian Methods
 
 ## Goal
 Uncertainty quantification and risk assessment
@@ -74,10 +58,35 @@ Resources:
 4. [PyMC documentation and tutorials](https://www.pymc.io/projects/docs/en/stable/learn.html)
 
 ## Projects
-- Project 4.1: Transaction Fraud Probability with Bayesian Networks
+- Project 3.1: Transaction Fraud Probability with Bayesian Networks
     * Model fraud probability using Bayesian networks that capture dependencies between transaction features (amount, time, location, merchant, user behavior)
-- Project 4.2: Dynamic Credit Limit Optimization
+- Project 3.2: Dynamic Credit Limit Optimization
     * Set optimal credit limits for B2B buyers using Bayesian models of default risk and business relationships.
+
+
+# PHASE 4: Time Series Analysis & Forecasting
+
+## Goal
+Master Time Series data analysis for supply chain forecasting
+
+## Resources
+1. [Forecasting: Principles and Practice, the Pythonic Way](https://otexts.com/fpppy/)
+2. [Time series analysis with Python](https://filippomb.github.io/python-time-series-handbook/notebooks/00/intro.html)
+3. [Kaggle Time Series Course](https://www.kaggle.com/learn/time-series)
+
+## Tools
+- statsmodels - Classical methods (ARIMA, SARIMAX, ETS)
+- Prophet
+- Darts
+- PyMC
+
+## Projects
+- Project 4.1: Multi-Product Demand Forecasting System
+    * Forecast sales volume by product category, geography, and seasonality.
+    * Use probabilistic forecasts, hierarchical Bayesian models, and Bayesian priors.
+- Project 4.2: Shipment Delay Forecasting
+    * Predict delivery delays using route history, customs data, and seasonal congestion.
+    * Use probabilistic distributions, Bayesian inference, Bayesian priors, and quantify risk.
 
 # PHASE 5: Graph Neural Networks
 
@@ -175,3 +184,6 @@ Optional expertise in specific domains.
 
 ## Computer Vision Track
 1. [Stanford CS231N: Deep Learning for Computer Vision](https://www.youtube.com/playlist?list=PLoROMvodv4rOmsNzYBMe0gJY2XS8AQg16)
+
+## Reinforcement Learning
+1. [DeepMind x UCL Deep Learning Lectures (YouTube)](https://youtube.com/playlist?list=PLqYmG7hTraZCRwoyGxvQkqVrZgDQi4m-5&si=vfEIZrtfEDBP9ph0)
