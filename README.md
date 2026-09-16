@@ -23,7 +23,7 @@ Theoretical foundations and practical classical ML skills
 - Project 1.1: Trade Transaction Anomaly Detector
     * Detect unusual patterns in order sizes, transaction frequency, or payment behavior
     * Algorithms: k-means clustering, isolation forest.
-- Project 1.3 – Customer Segmentation
+- Project 1.2 – Customer Segmentation
     * Cluster buyers based on purchase frequency, spend, and category preference.
     * Algorithms: K-Means, PCA, DBSCAN.
 

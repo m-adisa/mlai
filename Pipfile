@@ -11,6 +11,7 @@ pandas = "*"
 seaborn = "*"
 plotly = "*"
 nbformat = "*"
+tensorflow = "*"
 
 [dev-packages]
 ipykernel = "*"
