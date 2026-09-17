@@ -43,7 +43,7 @@ Neural networks and deep learning architectures
 - Project 2.1: Transaction Fraud Detection (NN)
     * Use MLPs or autoencoders to classify fraudulent vs. normal transactions.
 - Project 2.2: Price Prediction Neural Network
-    * MLP predicting optimal price given product features, competition, demand signals
+    * MLP predicting optimal price given product attributes and cross-sectional market features. Use Entity Embeddings for all high-cardinality categorical variables
 
 # PHASE 3: Probabilistic ML & Bayesian Methods
 
@@ -58,8 +58,8 @@ Resources:
 4. [PyMC documentation and tutorials](https://www.pymc.io/projects/docs/en/stable/learn.html)
 
 ## Projects
-- Project 3.1: Transaction Fraud Probability with Bayesian Networks
-    * Model fraud probability using Bayesian networks that capture dependencies between transaction features (amount, time, location, merchant, user behavior)
+- Project 3.1: Hierarchical Bayesian Logistic Regression Transaction Fraud Risk Estimator
+    * Model hierarchical random intercepts (partially pooled) that capture individual user/merchant risk propensities
 - Project 3.2: Dynamic Credit Limit Optimization
     * Set optimal credit limits for B2B buyers using Bayesian models of default risk and business relationships.
 
