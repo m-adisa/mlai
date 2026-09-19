@@ -122,13 +122,12 @@ Sequential decision-making and optimization. Policy gradients, value functions, 
 Build modern AI applications with LLMs and generative models
 
 ## Resources
-1. [NLP Demystified](https://www.nlpdemystified.org/course)
-2. [Microsoft GenAI for Beginners](https://github.com/microsoft/generative-ai-for-beginners)
-3. [Building LLMs from scratch by Vizuara (YouTube)](https://youtube.com/playlist?list=PLPTV0NXA_ZSgsLAr8YCgCwhPIJNNtexWu&si=Gcf42BJViOPqUXBR)
-4. [Build a SLM from Scratch by Vizuara (YouTube)](https://youtube.com/playlist?list=PLPTV0NXA_ZShuk6u31pgjHjFO2eS9p5EV&si=_6wN_3whHz94a852)
-5. [LLM Engineer's Handbook - Maxime Labonne and Paul Iusztin](https://drive.google.com/file/d/1RVPi5-7GIALaJN27jdH8Q69tmkqri0Ot/view?usp=sharing)
-6. [Fine-tuning an LLM](https://learn.activeloop.ai/courses/llms)
-7. [MCP](https://huggingface.co/learn/mcp-course/unit0/introduction)
+1. [NLP Demystified(YouTube)](https://m.youtube.com/playlist?list=PLw3N0OFSAYSEC_XokEcX8uzJmEZSoNGuS)
+2. [Building LLMs from scratch by Vizuara (YouTube)](https://youtube.com/playlist?list=PLPTV0NXA_ZSgsLAr8YCgCwhPIJNNtexWu&si=Gcf42BJViOPqUXBR)
+3. [Build a SLM from Scratch by Vizuara (YouTube)](https://youtube.com/playlist?list=PLPTV0NXA_ZShuk6u31pgjHjFO2eS9p5EV&si=_6wN_3whHz94a852)
+4. [LLM Engineer's Handbook - Maxime Labonne and Paul Iusztin](https://drive.google.com/file/d/1RVPi5-7GIALaJN27jdH8Q69tmkqri0Ot/view?usp=sharing)
+5. [Fine-tuning an LLM](https://learn.activeloop.ai/courses/llms)
+6. [MCP](https://huggingface.co/learn/mcp-course/unit0/introduction)
 
 ## Projects
 - Project 7.1: Multilingual Shopping Assistant
