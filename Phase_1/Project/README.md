@@ -53,13 +53,21 @@ Computed per `customer_unique_id`:
 
 - [K-Means](https://scikit-learn.org/stable/modules/generated/sklearn.cluster.KMeans.html) — k chosen via elbow (inertia) + [silhouette score](https://scikit-learn.org/stable/modules/generated/sklearn.metrics.silhouette_score.html), both reported
 - [PCA](https://scikit-learn.org/stable/modules/generated/sklearn.decomposition.PCA.html) — dimensionality reduction before K-Means and for visualization
-- [DBSCAN](https://scikit-learn.org/stable/modules/generated/sklearn.cluster.DBSCAN.html) — `eps` from a k-distance plot, `min_samples = 2 × n_features`, per the heuristic in the original DBSCAN paper ([Ester et al., 1996](https://webdocs.cs.ualberta.ca/~zaiane/courses/cmput695-00/papers/00153.pdf), refined in [Sander et al., 1998](https://static.aminer.org/pdf/PDF/000/307/216/a_density_based_approach_for_clustering_spatial_database.pdf))
+- [DBSCAN](https://scikit-learn.org/stable/modules/generated/sklearn.cluster.DBSCAN.html) — `eps` from a k-distance plot, `min_samples = 2 × n_features`, per the heuristic in the original DBSCAN paper ([Ester et al., 1996](https://webdocs.cs.ualberta.ca/~zaiane/courses/cmput695-00/papers/00153.pdf), refined in [Sander et al., 1998](https://static.aminer.org/pdf/PDF/000/307/216/a_density_based_approach_for_clustering_spatial_database.pdf)). Run on **both** the full scaled feature space and the PCA-reduced space — density-based distance metrics degrade at ~16 dimensions, so the full-space run alone would stack the deck against DBSCAN. Both results reported; `eps`/`min_samples` re-derived separately per space (k-distance plot and dimensionality both change)
 
 ## Evaluation
 
-- [Silhouette score](https://scikit-learn.org/stable/modules/generated/sklearn.metrics.silhouette_score.html), [Davies-Bouldin](https://scikit-learn.org/stable/modules/generated/sklearn.metrics.davies_bouldin_score.html), [Calinski-Harabasz](https://scikit-learn.org/stable/modules/generated/sklearn.metrics.calinski_harabasz_score.html) — across all three algorithms/tracks
+- [Silhouette score](https://scikit-learn.org/stable/modules/generated/sklearn.metrics.silhouette_score.html), [Davies-Bouldin](https://scikit-learn.org/stable/modules/generated/sklearn.metrics.davies_bouldin_score.html), [Calinski-Harabasz](https://scikit-learn.org/stable/modules/generated/sklearn.metrics.calinski_harabasz_score.html) — computed across all three algorithms/tracks as the common cross-algorithm yardstick. Caveat carried into the comparison, not hidden: all three are centroid/distance-based and implicitly reward convex clusters, so they structurally favor K-Means's geometry over DBSCAN's — directionally comparable, not strictly equivalent, across algorithms
+- **[DBCV](https://www.dbs.ifi.lmu.de/~zimek/publications/SDM2014/DBCV.pdf)** ([FelSiq/DBCV](https://github.com/FelSiq/DBCV) implementation) — required primary validation metric for DBSCAN specifically, not optional. Scores density-connectedness rather than distance-to-centroid, so it's the correct tool for what DBSCAN actually produces, unlike the three metrics above. Handles noise (`-1`) natively as part of the score — no exclusion needed. Where DBCV and the silhouette/DB/CH verdicts on DBSCAN disagree is reported explicitly, not resolved by picking one
 - Qualitative segment profiling — per-cluster RFM/category/review/delivery summary table, PCA 2D scatter
 - **Stability check** — bootstrap resample the customer set (e.g. n=20 resamples), re-cluster each, measure label agreement against the full-data clustering via [Adjusted Rand Index](https://scikit-learn.org/stable/modules/generated/sklearn.metrics.adjusted_rand_score.html). Reported per algorithm/track.
+
+**DBCV compute constraint.** DBCV builds a mutual-reachability MST over the full pairwise distance graph — effectively O(n²) memory/compute. Feasible directly on the repeat-only track (~3k customers). Not feasible on the full-base track (~96k unique customers) at full size — computed there on a random subsample (~5k–10k, same sampling approach as the stability check), stated explicitly in the results rather than silently subsampled.
+
+**Silhouette/DB/CH noise-point handling** (unaffected by the DBCV addition — these three still need it, DBCV doesn't):
+- Noise points excluded before computing all three (standard convention — scoring them would penalize DBSCAN for correctly refusing to force-assign outliers)
+- Noise fraction (`% labeled -1`) reported as its own stat alongside the metrics, not folded into them
+- If a run leaves <2 clusters after removing noise, or noise fraction exceeds ~50%, metrics are flagged unreliable rather than reported at face value against K-Means
 
 ## Project structure
 
@@ -81,6 +89,7 @@ Phase_1/Project/
 Add to `Pipfile`:
 - `kagglehub` — dataset download
 - `scipy` — DBSCAN/stability support
+- `dbcv` — DBCV metric ([FelSiq/DBCV](https://github.com/FelSiq/DBCV); install via `pip install "git+https://github.com/FelSiq/DBCV"`, or as a Pipfile git source)
 
 `data/raw/` is gitignored; notebook/script downloads on first run via `kagglehub` (instructions in `src/data_loading.py`).
 
@@ -96,5 +105,6 @@ Add to `Pipfile`:
 - [scikit-learn: adjusted_rand_score](https://scikit-learn.org/stable/modules/generated/sklearn.metrics.adjusted_rand_score.html)
 - Ester, Kriegel, Sander, Xu (1996), [original DBSCAN paper](https://webdocs.cs.ualberta.ca/~zaiane/courses/cmput695-00/papers/00153.pdf)
 - Sander, Ester, Kriegel, Xu (1998), [GDBSCAN — min_samples heuristic](https://static.aminer.org/pdf/PDF/000/307/216/a_density_based_approach_for_clustering_spatial_database.pdf)
+- Moulavi, Jaskowiak, Campello, Zimek, Sander (2014), [DBCV — density-based clustering validation](https://www.dbs.ifi.lmu.de/~zimek/publications/SDM2014/DBCV.pdf)
+- [FelSiq/DBCV — Python DBCV implementation](https://github.com/FelSiq/DBCV)
 - [mlai curriculum](https://github.com/m-adisa/mlai/blob/main/README.md)
-- 
