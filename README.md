@@ -1,13 +1,3 @@
-# ML and AI
-
-The goals are:
-- To become a machine learning engineer
-- To become an artificial intelligence engineer
-
-# Prerequisites
-- Good understanding of linear algebra
-- Basic understanding of multivariable calculus
-
 # PHASE 1: Classical ML & Foundations
 
 ## Goal
@@ -27,29 +17,33 @@ Theoretical foundations and practical classical ML skills
     * Cluster buyers based on purchase frequency, spend, and category preference.
     * Algorithms: K-Means, PCA, DBSCAN.
 
-# PHASE 2: Neural Networks & Deep Learning
+# PHASE 2: Neural Networks, Deep Learning & Transformers
 
 ## Goal
-Neural networks and deep learning architectures
+Neural network fundamentals through modern Transformer architectures — from backpropagation and MLPs to self-attention, the mechanism behind every current LLM.
 
 ## Resources
-1. [Microsoft AI for Beginners](https://github.com/microsoft/ai-for-beginners)
-2. [Building Neural Networks from Scratch by Vizuara (YouTube)](https://youtube.com/playlist?list=PLPTV0NXA_ZSj6tNyn_UadmUeU3Q3oR-hu&si=kjMRUrz8UJu7d5JA)
-3. [Neural Networks by Andrej Karpathy (YouTube)](https://youtube.com/playlist?list=PLAqhIrjkxbuWI23v9cThsA9GvCAUhRvKZ&si=DP9S3y-J6RlaZ1OR)
-4. [Practical Deep Learning](https://course.fast.ai/)
-5. [Deep Learning for Coders with Fastai and PyTorch (GitHub Book)](https://github.com/fastai/fastbook) 
+1. [Building Neural Networks from Scratch by Vizuara (YouTube)](https://youtube.com/playlist?list=PLPTV0NXA_ZSj6tNyn_UadmUeU3Q3oR-hu&si=kjMRUrz8UJu7d5JA)
+2. [Neural Networks by Andrej Karpathy (YouTube)](https://youtube.com/playlist?list=PLAqhIrjkxbuWI23v9cThsA9GvCAUhRvKZ&si=DP9S3y-J6RlaZ1OR)
+3. [Practical Deep Learning](https://course.fast.ai/)
+4. [3Blue1Brown — Neural Networks (full course)](https://www.3blue1brown.com/?topic=neural-networks)
+5. [Transformers from Scratch (gada.space)](https://www.gada.space/posts/transformers-from-scratch/)
+6. [Attention Is All You Need (paper)](https://arxiv.org/abs/1706.03762)
+
+## Short Reads / Further Reading
+1. [The Illustrated Transformer — Jay Alammar](http://jalammar.github.io/illustrated-transformer/)
+2. [A Visual Guide to Attention Variants — Sebastian Raschka](https://magazine.sebastianraschka.com/p/visual-attention-variants)
 
 ## Projects
-- Project 2.1: Transaction Fraud Detection (NN)
-    * Use MLPs or autoencoders to classify fraudulent vs. normal transactions.
-- Project 2.2: Price Prediction Neural Network
-    * MLP predicting optimal price given product attributes and cross-sectional market features. Use Entity Embeddings for all high-cardinality categorical variables
+- Project 2.1: Transaction Fraud Detection Network
+    * Build an MLP/autoencoder baseline to classify fraudulent vs. normal transactions, then extend it with a self-attention layer over each transaction's event sequence (login → cart → payment → shipping) to learn which steps in the sequence carry the fraud signal.
+- Project 2.2: Shipment ETA Transformer
+    * Encoder-based Transformer over shipment-leg event history (port departures, customs clearances, carrier handoffs) predicting arrival-time distributions. Implement multi-head self-attention, positional encoding, and a full Transformer block end-to-end.
 
 # PHASE 3: Probabilistic ML & Bayesian Methods
 
 ## Goal
 Uncertainty quantification and risk assessment
-Resources:
 
 ## Resources
 1. [Probabilistic Machine Learning: An Introduction -- Kevin P. Murphy](https://drive.google.com/file/d/17Gj3OVjY53gKeqQmZw9Ti8UcJoRh85wv/view?usp=sharing)
@@ -62,7 +56,6 @@ Resources:
     * Model hierarchical random intercepts (partially pooled) that capture individual user/merchant risk propensities
 - Project 3.2: Dynamic Credit Limit Optimization
     * Set optimal credit limits for B2B buyers using Bayesian models of default risk and business relationships.
-
 
 # PHASE 4: Time Series Analysis & Forecasting
 
@@ -97,7 +90,7 @@ Model network relationships in supply chains
 1. [Stanford CS224W: Machine Learning with Graphs (YouTube)](https://www.youtube.com/playlist?list=PLoROMvodv4rPLKxIpqhjhPgdQy7imNkDn)
 2. [Graph Neural Networks by Vizuara (YouTube)](https://youtube.com/playlist?list=PLPTV0NXA_ZSg4Pimkso0nHxwYMB6IGX7l&si=JV-V2Wl63X8YQn6Y)
 3. [Graph Representation Learning -- William L. Hamilton](https://drive.google.com/file/d/16--OIlXQ-0HJy3pCk63HchjNI6YxKfjZ/view?usp=sharing)
-3. [PyTorch Geometric Tutorials](https://pytorch-geometric.readthedocs.io/en/latest/notes/introduction.html)
+4. [PyTorch Geometric Tutorials](https://pytorch-geometric.readthedocs.io/en/latest/notes/introduction.html)
 
 ## Projects
 - Project 5.1: Supply Chain Graph Builder
@@ -108,7 +101,7 @@ Model network relationships in supply chains
 # PHASE 6: Reinforcement Learning
 
 ## Goal
-Sequential decision-making and optimization
+Sequential decision-making and optimization. Policy gradients, value functions, and PPO mechanics here carry forward directly into Phase 8's alignment work.
 
 ## Resources
 1. [Hands on Reinforcement Learning by Vizuara (YouTube)](https://youtube.com/playlist?list=PLPTV0NXA_ZSgf2mDUJaTC3wVHHcoIgk12&si=xBV_7TaIeY2gJjOM)
@@ -143,7 +136,25 @@ Build modern AI applications with LLMs and generative models
 - Project 7.2: Multilingual Procurement Assistant
     * LLM assistant that extracts custom procurement requirements, recommends sourcing strategies, and generates RFQs for complex orders.
 
-# PHASE 8: Agentic AI & Multi-Agent Systems
+# PHASE 8: Alignment & Post-Training
+
+## Goal
+RLHF, DPO, and GRPO — aligning a base LLM to human and task preferences, building directly on Phase 6's RL foundations and Phase 7's base model.
+
+## Resources
+1. [Reinforcement Learning from Human Feedback — Nathan Lambert (free online book)](https://rlhfbook.com)
+2. [Hugging Face TRL documentation](https://huggingface.co/docs/trl)
+3. [Direct Preference Optimization: Your Language Model is Secretly a Reward Model (paper)](https://arxiv.org/abs/2305.18290)
+4. [Training language models to follow instructions with human feedback -- InstructGPT (paper)](https://arxiv.org/abs/2203.02155)
+5. [Reinforcement Learning From Human Feedback -- DeepLearning.AI x Google Cloud (short course)](https://www.deeplearning.ai/short-courses/reinforcement-learning-from-human-feedback)
+
+## Projects
+- Project 8.1: DPO Fine-Tune of the Procurement Assistant
+    * Take the Phase 7 Multilingual Procurement Assistant, build a preference dataset over RFQ/sourcing-recommendation quality, and DPO-tune it.
+- Project 8.2: Reward Model + PPO for Negotiation Drafting
+    * Train a reward model on preference judgments over negotiation/quote drafts, then PPO-tune a small model against it.
+
+# PHASE 9: Agentic AI & Multi-Agent Systems
 
 ## Goal
 Autonomous AI systems and multi-agent architectures
@@ -156,15 +167,15 @@ Autonomous AI systems and multi-agent architectures
 5. [RAG Workshop by Vizuara (YouTube)](https://youtube.com/playlist?list=PLPTV0NXA_ZSgZdinC6o6dF_p8LQqz8vqq&si=3fdpEA-UMf7wa0fv)
 
 ## Projects
-- Project 8.1: Document Processing Pipeline
+- Project 9.1: Document Processing Pipeline
     * Chain of agents that collect, parse, and verify trade documents end-to-end.
-- Project 8.2: Supply Chain Disruption Response Agent
+- Project 9.2: Supply Chain Disruption Response Agent
     * Multi-agent system that detects disruptions (e.g., supplier failure) and autonomously reconfigures supply routes.
 
-# PHASE 9: ML Engineering & Production
+# PHASE 10: ML Engineering & Production
 
 ## Goal
-Design, deploy, and maintain production ML systems
+Design, deploy, and maintain production ML systems — including efficient serving for the LLM and agent models built in Phases 7-9.
 
 ## Resources
 1. [Machine Learning in Production by Vizuara](https://youtube.com/playlist?list=PLPTV0NXA_ZSgvSjVEzUNMvTIgOf6vs8YQ&si=KLiRsJPyZ731FCYX)
@@ -173,11 +184,13 @@ Design, deploy, and maintain production ML systems
 4. [MLOps Guide](https://mlops-guide.github.io/)
 
 ## Projects
-- Project 9.1:  Real-Time Feature Store & Model Serving Platform
-    * Build production infrastructure that serves multiple models from prior phases (fraud detection, pricing, demand forecasting) with shared feature computation and low-latency inference.
-- Project 9.2: Model Monitoring & Drift Detection
+- Project 10.1: Real-Time Feature Store & Model Serving Platform
+    * Build production infrastructure that serves multiple models from prior phases (fraud detection, pricing, demand forecasting) with shared feature computation and low-latency inference. Extend to serve the fine-tuned LLM/agent from Phases 7-9: quantization, LoRA/QLoRA adapters, and efficient inference (KV-cache/batched serving).
+- Project 10.2: Model Monitoring & Drift Detection
     * Build a system that monitors performance and detects data drift across deployed ML models.
 
+# More Relevant Resources 
+1. [DeepMind x UCL Deep Learning Lectures (YouTube)](https://youtube.com/playlist?list=PLqYmG7hTraZCRwoyGxvQkqVrZgDQi4m-5&si=vfEIZrtfEDBP9ph0)
 
 # SPECIALIZATIONS
 Optional expertise in specific domains.
@@ -185,5 +198,3 @@ Optional expertise in specific domains.
 ## Computer Vision Track
 1. [Stanford CS231N: Deep Learning for Computer Vision](https://www.youtube.com/playlist?list=PLoROMvodv4rOmsNzYBMe0gJY2XS8AQg16)
 
-## Reinforcement Learning
-1. [DeepMind x UCL Deep Learning Lectures (YouTube)](https://youtube.com/playlist?list=PLqYmG7hTraZCRwoyGxvQkqVrZgDQi4m-5&si=vfEIZrtfEDBP9ph0)
