@@ -101,7 +101,7 @@ Model network relationships in supply chains
 # PHASE 6: Reinforcement Learning
 
 ## Goal
-Sequential decision-making and optimization. Policy gradients, value functions, and PPO mechanics here carry forward directly into Phase 8's alignment work.
+Sequential decision-making, optimization, and continuous control — policy gradients, value functions, and PPO mechanics here carry forward into Phase 8's alignment work.
 
 ## Resources
 1. [Hands on Reinforcement Learning by Vizuara (YouTube)](https://youtube.com/playlist?list=PLPTV0NXA_ZSgf2mDUJaTC3wVHHcoIgk12&si=xBV_7TaIeY2gJjOM)
@@ -109,17 +109,21 @@ Sequential decision-making and optimization. Policy gradients, value functions, 
 3. [DeepMind x UCL RL Lecture Series (YouTube)](https://www.youtube.com/playlist?list=PLqYmG7hTraZDVH599EItlEWsUOsJbAodm)
 4. [Spinning Up in Deep RL - OpenAI](https://spinningup.openai.com/en/latest/)
 5. [Deep RL Course](https://huggingface.co/learn/deep-rl-course/unit0/introduction)
+6. [Reinforcement Learning and Optimal Control -- Dimitri P. Bertsekas](https://drive.google.com/file/d/17hOmomVTyUFxQr95Tm3wruGEQ2AxMYFb/view?usp=drivesdk)
 
 ## Projects
 - Project 6.1: Dynamic Pricing Engine
     * RL agent adjusting product prices based on competition, demand, and margin.
 - Project 6.2: Warehouse Inventory Allocation
     * RL agents to optimally distribute inventory across a warehouse network considering demand, costs, and lead times.
+    * Frame inventory dynamics as a continuous control problem -- state-space representation of stock levels, continuous replenishment as the control input -- and compare a classical control baseline (PID or LQR) against the learned RL policy.
 
 # PHASE 7: LLMs & Generative AI
 
 ## Goal
-Build modern AI applications with LLMs and generative models
+Build modern AI applications with LLMs and generative models.
+
+Every project must ship with an evaluation harness -- defined task-success metrics (e.g., RFQ/recommendation accuracy, hallucination rate) measured against a held-out test set -- before it's considered complete.
 
 ## Resources
 1. [NLP Demystified(YouTube)](https://m.youtube.com/playlist?list=PLw3N0OFSAYSEC_XokEcX8uzJmEZSoNGuS)
@@ -140,6 +144,8 @@ Build modern AI applications with LLMs and generative models
 ## Goal
 RLHF, DPO, and GRPO — aligning a base LLM to human and task preferences, building directly on Phase 6's RL foundations and Phase 7's base model.
 
+Every project must include a before/after evaluation -- the aligned model compared against the base model on the target behavior (RFQ quality, negotiation tone) using a held-out preference set, not training loss alone.
+
 ## Resources
 1. [Reinforcement Learning from Human Feedback — Nathan Lambert (free online book)](https://rlhfbook.com)
 2. [Hugging Face TRL documentation](https://huggingface.co/docs/trl)
@@ -156,7 +162,9 @@ RLHF, DPO, and GRPO — aligning a base LLM to human and task preferences, build
 # PHASE 9: Agentic AI & Multi-Agent Systems
 
 ## Goal
-Autonomous AI systems and multi-agent architectures
+Autonomous AI systems and multi-agent architectures.
+
+Every project must include an eval harness for agent trajectories -- task-completion rate, plus a failure-mode taxonomy for cases where the agent didn't complete or mishandled the task.
 
 ## Resources
 1. [Microsoft AI Agents for Beginners](https://github.com/microsoft/ai-agents-for-beginners)
@@ -171,7 +179,24 @@ Autonomous AI systems and multi-agent architectures
 - Project 9.2: Supply Chain Disruption Response Agent
     * Multi-agent system that detects disruptions (e.g., supplier failure) and autonomously reconfigures supply routes.
 
-# PHASE 10: ML Engineering & Production
+# PHASE 10: Systems for ML
+
+## Goal
+The infrastructure that makes large-scale training possible — distributed training (data/tensor/pipeline parallelism), hardware-aware optimization (GPU/TPU architecture, memory bandwidth, mixed precision), and the frameworks used to train models beyond a single GPU.
+
+## Resources
+1. [Stanford CS336: Language Modeling from Scratch](https://cs336.stanford.edu/) | [YouTube playlist](https://m.youtube.com/playlist?list=PLoROMvodv4rMqXOcazWaTUHhq-yembLCV)
+2. [Making Deep Learning Go Brrrr From First Principles -- Horace He](https://horace.io/brrr_intro.html)
+3. [PyTorch FSDP documentation](https://docs.pytorch.org/tutorials/intermediate/FSDP_tutorial.html)
+4. [DeepSpeed documentation](https://deepspeed.readthedocs.io/en/latest/)
+
+## Projects
+- Project 10.1: Distributed Training Benchmark
+    * Take the Shipment ETA Transformer (2.2) or the Procurement Assistant fine-tune (7.2), scale training across multiple GPUs with DDP/FSDP, and profile where time actually goes (compute/memory/communication) using the Brrr framework.
+- Project 10.2: Scaled Training Infra for the Alignment Pipeline
+    * Build a DeepSpeed/FSDP-based training setup for Phase 8's DPO/PPO jobs (mixed precision, gradient checkpointing, multi-GPU orchestration) so alignment training isn't bottlenecked to one GPU.
+
+# PHASE 11: ML Engineering & Production
 
 ## Goal
 Design, deploy, and maintain production ML systems — including efficient serving for the LLM and agent models built in Phases 7-9.
@@ -183,9 +208,9 @@ Design, deploy, and maintain production ML systems — including efficient servi
 4. [MLOps Guide](https://mlops-guide.github.io/)
 
 ## Projects
-- Project 10.1: Real-Time Feature Store & Model Serving Platform
+- Project 11.1: Real-Time Feature Store & Model Serving Platform
     * Build production infrastructure that serves multiple models from prior phases (fraud detection, pricing, demand forecasting) with shared feature computation and low-latency inference. Extend to serve the fine-tuned LLM/agent from Phases 7-9: quantization, LoRA/QLoRA adapters, and efficient inference (KV-cache/batched serving).
-- Project 10.2: Model Monitoring & Drift Detection
+- Project 11.2: Model Monitoring & Drift Detection
     * Build a system that monitors performance and detects data drift across deployed ML models.
 
 # More Relevant Resources 
@@ -196,4 +221,4 @@ Optional expertise in specific domains.
 
 ## Computer Vision Track
 1. [Stanford CS231N: Deep Learning for Computer Vision](https://www.youtube.com/playlist?list=PLoROMvodv4rOmsNzYBMe0gJY2XS8AQg16)
-
+2. 
