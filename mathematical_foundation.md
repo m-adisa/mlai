@@ -67,7 +67,8 @@ Executing an unaggregated join duplicates the monetary features across all combi
 
 $$egin{aligned}
 	ext{Naive Total Revenue Calculation} &= \sum_{r \in \mathcal{T}_{	ext{joined}}} 	ext{payment\_value}_r \
-&= \sum_{i=1}^{|\mathcal{T}_{	ext{orders}}|} \left( M_i 	imes \sum_{p=1}^{P_i} 	ext{payment\_value}_{i,p} ight)
+&= \sum_{i=1}^{|\mathcal{T}_{	ext{orders}}|} \left( M_i 	imes \sum_{p=1}^{P_i} 	ext{payment\_value}_{i,p} 
+ight)
 \end{aligned}$$
 
 For order $O_1$:
@@ -132,7 +133,8 @@ Customer spending across product categories (e.g., share of wallet spent on Elec
 #### 2.2.1 The Simplex Constraint & Spurious Correlation
 Let $\mathbf{s}_u = [s_{u,1}, s_{u,2}, \dots, s_{u,C}]$ represent the vector of spend proportions for customer $u$ across $C$ categories. By definition, $\mathbf{s}_u$ lies strictly within a bounded Aitchison simplex $\mathbb{S}^C$:
 
-$$\mathbb{S}^C = \left\{ \mathbf{s} \in \mathbb{R}^C \;\middle|\; s_c > 0, \, \sum_{c=1}^C s_c = 1 ight\}$$
+$$\mathbb{S}^C = \left\{ \mathbf{s} \in \mathbb{R}^C \;\middle|\; s_c > 0, \, \sum_{c=1}^C s_c = 1 
+ight\}$$
 
 Because the elements are constrained to sum to $1$, the components are not mathematically independent. Calculating standard Pearson correlations or Euclidean distances directly on raw proportions yields severe artifacts:
 
@@ -148,11 +150,17 @@ To break the simplex constraint, we project compositional vectors from $\mathbb{
 
 First, compute the geometric mean of the compositional vector $\mathbf{s}_u$:
 
-$$g(\mathbf{s}_u) = \left( \prod_{c=1}^C s_{u,c} ight)^{rac{1}{C}} = \exp \left( rac{1}{C} \sum_{c=1}^C \ln(s_{u,c}) ight)$$
+$$g(\mathbf{s}_u) = \left( \prod_{c=1}^C s_{u,c} 
+ight)^{rac{1}{C}} = \exp \left( rac{1}{C} \sum_{c=1}^C \ln(s_{u,c}) 
+ight)$$
 
 The CLR transformation vector $\mathbf{y}_u = 	ext{CLR}(\mathbf{s}_u)$ is defined as:
 
-$$\mathbf{y}_u = \left[ \ln\left(rac{s_{u,1}}{g(\mathbf{s}_u)}ight), \, \ln\left(rac{s_{u,2}}{g(\mathbf{s}_u)}ight), \, \dots, \, \ln\left(rac{s_{u,C}}{g(\mathbf{s}_u)}ight) ight]$$
+$$\mathbf{y}_u = \left[ \ln\left(rac{s_{u,1}}{g(\mathbf{s}_u)}
+ight), \, \ln\left(rac{s_{u,2}}{g(\mathbf{s}_u)}
+ight), \, \dots, \, \ln\left(rac{s_{u,C}}{g(\mathbf{s}_u)}
+ight) 
+ight]$$
 
 #### 2.2.3 Zero Handling via Multiplicative Replacement
 Because $s_{u,c} = 0$ renders $\ln(0)$ undefined and zeros out the geometric mean $g(\mathbf{s}_u) = 0$, zero values must be imputed prior to CLR transformation using Bayesian multiplicative replacement:
@@ -220,12 +228,14 @@ MFA constructs a global weighted matrix $\mathbf{A}_{	ext{MFA}}$ by multiplying 
 
 $$lpha_k = rac{1}{\lambda_{1}^{(k)}} = rac{1}{(\sigma_{1}^{(k)})^2}$$
 
-$$\mathbf{A}_{	ext{MFA}} = \left[ lpha_1^{rac{1}{2}} \mathbf{X}^{(1)} \;\middle|\; lpha_2^{rac{1}{2}} \mathbf{X}^{(2)} \;\middle|\; \dots \;\middle|\; lpha_K^{rac{1}{2}} \mathbf{X}^{(K)} ight]$$
+$$\mathbf{A}_{	ext{MFA}} = \left[ lpha_1^{rac{1}{2}} \mathbf{X}^{(1)} \;\middle|\; lpha_2^{rac{1}{2}} \mathbf{X}^{(2)} \;\middle|\; \dots \;\middle|\; lpha_K^{rac{1}{2}} \mathbf{X}^{(K)} 
+ight]$$
 
 #### 3.2.3 Proof of Equal Maximum Directional Variance
 Under the MFA transformation, the maximum variance of any single direction within weighted block $k$ is normalized to exactly $1.0$:
 
-$$\lambda_{1}\left( (lpha_k^{rac{1}{2}} \mathbf{X}^{(k)})^T (lpha_k^{rac{1}{2}} \mathbf{X}^{(k)}) ight) = lpha_k \cdot \lambda_{1}^{(k)} = rac{1}{\lambda_{1}^{(k)}} \cdot \lambda_{1}^{(k)} = 1.0$$
+$$\lambda_{1}\left( (lpha_k^{rac{1}{2}} \mathbf{X}^{(k)})^T (lpha_k^{rac{1}{2}} \mathbf{X}^{(k)}) 
+ight) = lpha_k \cdot \lambda_{1}^{(k)} = rac{1}{\lambda_{1}^{(k)}} \cdot \lambda_{1}^{(k)} = 1.0$$
 
 This weighting scheme ensures that no individual block can dominate the first principal component of the global space, regardless of how many features ($p_k$) that block contains.
 
@@ -245,7 +255,9 @@ Where $\gamma_j$ is the variance (eigenvalue) associated with global principal c
 #### 3.3.1 Dynamic Retention Threshold & Dimensionality Cap
 Rather than selecting an arbitrary 2D or 3D subspace, the latent dimensionality $d^*$ is dynamically selected to preserve $\ge 90\%$ of total cumulative structural variance, subject to a upper bound cap of $d_{	ext{max}} = 8$:
 
-$$d^* = \min \left( \left\{ d \in \{1, \dots, P\} \;\middle|\; rac{\sum_{j=1}^d \gamma_j}{\sum_{j=1}^P \gamma_j} \ge 0.90 ight\}, \, 8 ight)$$
+$$d^* = \min \left( \left\{ d \in \{1, \dots, P\} \;\middle|\; rac{\sum_{j=1}^d \gamma_j}{\sum_{j=1}^P \gamma_j} \ge 0.90 
+ight\}, \, 8 
+ight)$$
 
 This strategy guarantees high informational fidelity while protecting downstream clustering models from the curse of dimensionality.
 
@@ -298,7 +310,8 @@ Where $oldsymbol{\mu}_k = rac{1}{|C_k|} \sum_{\mathbf{z}_i \in C_k} \mathbf{z}
 Minimizing $\mathcal{J}$ partitions the latent space $\mathbb{R}^{d^*}$ into a set of convex **Voronoi cells** $\mathcal{V}(C_k)$:
 
 $$\mathcal{V}(C_k) = \left\{ \mathbf{z} \in \mathbb{R}^{d^*} \;\middle|\; \|\mathbf{z} - oldsymbol{\mu}_k\|_2 \le \|\mathbf{z} - oldsymbol{\mu}_j\|_2 \; orall \, j 
-eq k ight\}$$
+eq k 
+ight\}$$
 
 #### 4.1.2 Algorithmic Limitations
 1.  **Convexity Constraint:** K-Means cannot discover non-spherical or complex topological clusters (e.g., concentric rings or arbitrary density paths).
@@ -313,7 +326,8 @@ DBSCAN (Density-Based Spatial Clustering of Applications with Noise) relaxes the
 
 1.  **$\epsilon$-Neighborhood:** The closed hyper-ball of radius $\epsilon$ centered at point $\mathbf{z}_i$:
 
-$$N_\epsilon(\mathbf{z}_i) = \left\{ \mathbf{z}_j \in \mathbf{Z} \;\middle|\; \|\mathbf{z}_i - \mathbf{z}_j\|_2 \le \epsilon ight\}$$
+$$N_\epsilon(\mathbf{z}_i) = \left\{ \mathbf{z}_j \in \mathbf{Z} \;\middle|\; \|\mathbf{z}_i - \mathbf{z}_j\|_2 \le \epsilon 
+ight\}$$
 
 2.  **Core Point:** A point $\mathbf{z}_i$ is a core point if its $\epsilon$-neighborhood contains at least $	ext{MinPts}$ observations:
 
@@ -343,7 +357,8 @@ Because pairwise Euclidean distances scale non-linearly with latent dimension $d
 3.  Sort $d^{(k)}(\mathbf{z})$ in ascending order and plot the resulting 1D curve.
 4.  Select $\epsilon$ at the **maximum curvature (elbow point)**:
 
-$$\epsilon^* = rg\max_{\epsilon} \left| rac{d^2}{dq^2} d^{(k)}(q) ight|$$
+$$\epsilon^* = rg\max_{\epsilon} \left| rac{d^2}{dq^2} d^{(k)}(q) 
+ight|$$
 
 Where $q$ is the sorted point index quantile. The elbow separates dense structural regions from sparse noise transitions.
 
@@ -366,7 +381,8 @@ eq A} rac{1}{|C_B|} \sum_{\mathbf{z}_k \in C_B} \|\mathbf{z}_i - \mathbf{z}_k\|
 *   **Davies-Bouldin Index (DB):**
 
 $$	ext{DB} = rac{1}{K} \sum_{k=1}^K \max_{j 
-eq k} \left( rac{ar{d}_k + ar{d}_j}{d(oldsymbol{\mu}_k, oldsymbol{\mu}_j)} ight)$$
+eq k} \left( rac{ar{d}_k + ar{d}_j}{d(oldsymbol{\mu}_k, oldsymbol{\mu}_j)} 
+ight)$$
 
 *   **Calinski-Harabasz Index (CH):**
 
@@ -380,11 +396,13 @@ eq d_2$.*
 
 *Proof:* Let $D_d(\mathbf{u}, \mathbf{v}) = \sqrt{\sum_{j=1}^d (u_j - v_j)^2}$ be the Euclidean distance in $d$ dimensions. Assume feature components $x_j$ are independent and identically distributed with variance $\sigma^2$. The expected squared distance between two random vectors is:
 
-$$\mathbb{E}\left[ D_d(\mathbf{u}, \mathbf{v})^2 ight] = \sum_{j=1}^d \mathbb{E}[(u_j - v_j)^2] = 2 d \sigma^2$$
+$$\mathbb{E}\left[ D_d(\mathbf{u}, \mathbf{v})^2 
+ight] = \sum_{j=1}^d \mathbb{E}[(u_j - v_j)^2] = 2 d \sigma^2$$
 
 Taking the expectation of the distance:
 
-$$\mathbb{E}\left[ D_d(\mathbf{u}, \mathbf{v}) ight] \propto \sqrt{d}$$
+$$\mathbb{E}\left[ D_d(\mathbf{u}, \mathbf{v}) 
+ight] \propto \sqrt{d}$$
 
 As dimension $d$ increases, the average pairwise distance scales proportionally to $\sqrt{d}$. Concurrently, by the concentration of measure phenomenon, the ratio of variance of distances to mean distance shrinks:
 
@@ -403,12 +421,14 @@ To evaluate DBSCAN, we use **Density-Based Clustering Validation (DBCV)**, which
 For a point $\mathbf{z}_i \in C_k$, its All-Points Core Distance $a_{	ext{pts}}(\mathbf{z}_i)$ is defined as the inverse density measure:
 
 $$a_{	ext{pts}}(\mathbf{z}_i) = \left( rac{1}{|C_k|-1} \sum_{\mathbf{z}_j \in C_k, j 
-eq i} rac{1}{\|\mathbf{z}_i - \mathbf{z}_j\|_2^{d^*}} ight)^{-rac{1}{d^*}}$$
+eq i} rac{1}{\|\mathbf{z}_i - \mathbf{z}_j\|_2^{d^*}} 
+ight)^{-rac{1}{d^*}}$$
 
 #### 5.2.2 Mutual Reachability Distance
 The Mutual Reachability Distance $d_{	ext{mr}}(\mathbf{z}_i, \mathbf{z}_j)$ between two points is defined as:
 
-$$d_{	ext{mr}}(\mathbf{z}_i, \mathbf{z}_j) = \max \left( a_{	ext{pts}}(\mathbf{z}_i), \, a_{	ext{pts}}(\mathbf{z}_j), \, \|\mathbf{z}_i - \mathbf{z}_j\|_2 ight)$$
+$$d_{	ext{mr}}(\mathbf{z}_i, \mathbf{z}_j) = \max \left( a_{	ext{pts}}(\mathbf{z}_i), \, a_{	ext{pts}}(\mathbf{z}_j), \, \|\mathbf{z}_i - \mathbf{z}_j\|_2 
+ight)$$
 
 This metric expands sparse points outward while leaving dense interior points unchanged.
 
@@ -422,7 +442,9 @@ The overall DBCV score is the weighted average validity index across all cluster
 
 $$	ext{DBCV} = \sum_{k=1}^K rac{|C_k|}{N} \left( rac{\min_{l 
 eq k} D_{	ext{sep}}(C_k, C_l) - D_S(C_k)}{\max\left(\min_{l 
-eq k} D_{	ext{sep}}(C_k, C_l), \, D_S(C_k)ight)} ight)$$
+eq k} D_{	ext{sep}}(C_k, C_l), \, D_S(C_k)
+ight)} 
+ight)$$
 
 $	ext{DBCV} \in [-1, 1]$, where positive values indicate dense, well-separated topological structures.
 
@@ -465,7 +487,10 @@ Given two partitions $U$ and $V$:
 
 The raw Rand Index is $RI = rac{a+b}{inom{n}{2}}$. ARI adjusts $RI$ for chance agreement:
 
-$$	ext{ARI} = rac{\sum_{ij} inom{n_{ij}}{2} - \left[ \sum_i inom{a_i}{2} \sum_j inom{b_j}{2} ight] / inom{n}{2}}{rac{1}{2} \left[ \sum_i inom{a_i}{2} + \sum_j inom{b_j}{2} ight] - \left[ \sum_i inom{a_i}{2} \sum_j inom{b_j}{2} ight] / inom{n}{2}}$$
+$$	ext{ARI} = rac{\sum_{ij} inom{n_{ij}}{2} - \left[ \sum_i inom{a_i}{2} \sum_j inom{b_j}{2} 
+ight] / inom{n}{2}}{rac{1}{2} \left[ \sum_i inom{a_i}{2} + \sum_j inom{b_j}{2} 
+ight] - \left[ \sum_i inom{a_i}{2} \sum_j inom{b_j}{2} 
+ight] / inom{n}{2}}$$
 
 Where $n_{ij}$ is the number of overlap observations between cluster $u_i \in U$ and $v_j \in V$.
 
@@ -480,7 +505,8 @@ If a customer resides in a persistent low-density region of the feature space, a
 #### 5.3.4 Statistical Stability Aggregation
 Stability is expressed as the empirical mean and standard deviation across $B = 20$ bootstrap iterations:
 
-$$	ext{Stability} = ar{	ext{ARI}} \pm s_{	ext{ARI}} = \left( rac{1}{B} \sum_{b=1}^B 	ext{ARI}_b ight) \pm \sqrt{rac{1}{B-1} \sum_{b=1}^B (	ext{ARI}_b - ar{	ext{ARI}})^2}$$
+$$	ext{Stability} = ar{	ext{ARI}} \pm s_{	ext{ARI}} = \left( rac{1}{B} \sum_{b=1}^B 	ext{ARI}_b 
+ight) \pm \sqrt{rac{1}{B-1} \sum_{b=1}^B (	ext{ARI}_b - ar{	ext{ARI}})^2}$$
 
 An analytical pipeline is considered stable if $ar{	ext{ARI}} \ge 0.75$ with $s_{	ext{ARI}} \le 0.05$.
 
@@ -524,7 +550,8 @@ To prevent summary skewness, cluster profiles are computed by projecting latent 
 3.  **Reverse $Z$-score Standardization:** $x_{	ext{transformed}} = 	ilde{x} \cdot \sigma_j + \mu_j$
 4.  **Reverse Non-Linear Transformations:**
     *   *Monetary Features:* $x_{	ext{raw}} = \exp(x_{	ext{transformed}}) - 1$
-    *   *Compositional Features:* $\mathbf{s}_{	ext{raw}} = 	ext{CLR}^{-1}(\mathbf{y}) = \mathcal{C}\left( [\exp(y_1), \dots, \exp(y_C)] ight)$, where $\mathcal{C}(\mathbf{v}) = rac{\mathbf{v}}{\sum v_j}$.
+    *   *Compositional Features:* $\mathbf{s}_{	ext{raw}} = 	ext{CLR}^{-1}(\mathbf{y}) = \mathcal{C}\left( [\exp(y_1), \dots, \exp(y_C)] 
+ight)$, where $\mathcal{C}(\mathbf{v}) = rac{\mathbf{v}}{\sum v_j}$.
 
 #### 6.2.2 Population Baseline Contrast & Deviation Ratios
 Cluster profiling must never report absolute cluster averages in isolation. A segment metric $M(C_k)$ is mathematically meaningful only when contrasted against the global population baseline rate $M(\mathcal{P})$.
