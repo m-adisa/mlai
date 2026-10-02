@@ -12,6 +12,7 @@ seaborn = "*"
 plotly = "*"
 nbformat = "*"
 tensorflow = "*"
+kagglehub = "*"
 
 [dev-packages]
 ipykernel = "*"
