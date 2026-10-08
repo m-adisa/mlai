@@ -202,7 +202,7 @@ def _find_table_directory(data_dir: Path) -> Path | None:
 
     Searches the supplied directory first, then nested directories. This
     makes the loader tolerant of the exact directory structure returned
-    by KaggleHub without hard-coding its cache/output layout.
+    by KaggleHub.
     """
     required_files = set(TABLE_FILES.values())
 
@@ -490,10 +490,6 @@ def _validate_identity_semantics(
 
 def _report_data_quality(tables: dict[str, pd.DataFrame]) -> None:
     """Report notable raw-data quality characteristics.
-
-    These observations do not modify the data or cause loading to fail.
-    They are surfaced so that downstream feature engineering can make
-    explicit decisions about how to handle them.
     """
     reviews = tables["order_reviews"]
     products = tables["products"]
@@ -502,9 +498,7 @@ def _report_data_quality(tables: dict[str, pd.DataFrame]) -> None:
     #
     # `review_id` is not a per-review identifier in Olist: a single review
     # (identical score, comment, and timestamps) can legitimately be linked
-    # to more than one order_id. This is an expected schema property, not a
-    # data-quality defect -- `(review_id, order_id)` is the real key and is
-    # enforced above via UNIQUE_KEYS. Surfaced only as an FYI.
+    # to more than one order_id.
     duplicate_review_ids = int(
         reviews["review_id"].duplicated(keep=False).sum()
     )
@@ -520,12 +514,10 @@ def _report_data_quality(tables: dict[str, pd.DataFrame]) -> None:
 
     # Orders with multiple distinct reviews.
     #
-    # Unlike the above, this DOES need a downstream decision: some orders
-    # received more than one distinct review over time (e.g. a revised or
-    # follow-up review with a different score). Feature engineering must
-    # pick one review per order_id before aggregating to customer_unique_id
-    # -- the latest review_answer_timestamp is the recommended rule, since
-    # it reflects the customer's final recorded sentiment.
+    # Some orders received more than one distinct review over time
+    # (e.g. a revised or follow-up review with a different score).
+    # Feature engineering must pick one review per order_id
+    # before aggregating to customer_unique_id.
     duplicate_order_reviews = int(
         reviews["order_id"].duplicated(keep=False).sum()
     )

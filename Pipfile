@@ -13,6 +13,7 @@ plotly = "*"
 nbformat = "*"
 tensorflow = "*"
 kagglehub = "*"
+kneed = "*"
 
 [dev-packages]
 ipykernel = "*"

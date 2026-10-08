@@ -1,39 +1,18 @@
 """Per-customer feature engineering for Olist customer segmentation.
 
 This module is responsible for:
-- aggregating order-level data to the `customer_unique_id` grain
-  (see theoretical_foundation.md Sec. 1 for why this matters),
+- aggregating order-level data to the `customer_unique_id` grain,
 - computing RFM, category-preference, and marketplace-extras features,
 - applying the feature-level transforms (log1p on monetary, CLR on
-  category shares) that theoretical_foundation.md Sec. 2 specifies,
+  category shares),
 - building the single MFA-weighted, PCA-reduced latent space Z that
-  BOTH clustering algorithms run in, and the diagnostic numbers that
+  the clustering algorithms run in, and the diagnostic numbers that
   parameterize it (PCA component count, MFA block eigenvalues, DBSCAN
-  eps, the category-coverage threshold, and a monetary skew check) --
-  all per theoretical_foundation.md Sec. 2-4 and Sec. 7.1 (ground
-  truth; the category-coverage threshold is the one exception, sourced
-  from the README rather than the math doc),
-- reporting (not silently deciding) which customers are excluded at
-  each stage, and validating the mathematical invariants those
-  transforms depend on.
+  eps, the category-coverage threshold, and a monetary skew check),
+- reporting which customers are excluded at each stage,
+  and validating the mathematical invariants those transforms depend on.
 
-Pipeline architecture (theoretical_foundation.md Sec. 3.3.2 / Sec. 4,
-confirmed against the doc's own diagram and its `cluster_labels()`
-reference implementation in Sec. 7.1): preprocessing and MFA produce a
-single weighted matrix A_MFA, global PCA reduces that to ONE latent
-space Z, and BOTH K-Means and DBSCAN cluster on that same Z -- "dual
-clustering on top of global PCA", not two algorithms each run in two
-separate spaces. An earlier version of this module computed a second,
-separate DBSCAN eps on the pre-PCA MFA-weighted space; that was carried
-over from the README's original design (written before this project's
-ground-truth doc existed) and contradicts the doc's explicit rule
-("always within the same latent space Z", Sec. 3.3.2/5.1.2) -- it has
-been removed. clustering.py imports `fit_latent_space` to get Z and
-fits sklearn's KMeans/DBSCAN on it -- actual model fitting is the only
-thing left there.
-
-Order population: only `order_status == 'delivered'` orders are used
-throughout (README "Data filtering rules"). All order-level
+Order population: only `order_status == 'delivered'` orders are used throughout. All order-level
 aggregations join at a safe grain (item -> product -> category, item ->
 order -> customer) using pandas `merge(..., validate=...)`, which
 hard-fails on any join that would multiply rows -- this is what rules
