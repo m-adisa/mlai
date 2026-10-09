@@ -585,7 +585,7 @@ def _render_findings(findings: list[dict]) -> None:
     print(rule)
 
     headers = {
-        "INFO": "Informational (no action needed)",
+        "INFO": "Informational",
         "WARN": "Needs attention",
     }
 

@@ -612,8 +612,6 @@ def preprocessing_diagnostics(
     if verbose:
         _render_diagnostics(diagnostics)
 
-    return diagnostics
-
 
 def _render_diagnostics(diagnostics: dict) -> None:
     """Print a nested diagnostics dict in an aligned, grouped layout."""
