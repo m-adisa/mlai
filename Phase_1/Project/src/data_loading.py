@@ -185,7 +185,7 @@ UNIQUE_KEYS: dict[str, list[str]] = {
     "orders": ["order_id"],
     "order_items": ["order_id", "order_item_id"],
     "order_payments": ["order_id", "payment_sequential"],
-    # "order_reviews": ["review_id", "order_id"],
+    "order_reviews": ["review_id", "order_id"],
     "products": ["product_id"],
     "sellers": ["seller_id"],
     "category_translation": ["product_category_name"],
@@ -202,7 +202,7 @@ def _find_table_directory(data_dir: Path) -> Path | None:
 
     Searches the supplied directory first, then nested directories. This
     makes the loader tolerant of the exact directory structure returned
-    by KaggleHub without hard-coding its cache/output layout.
+    by KaggleHub.
     """
     required_files = set(TABLE_FILES.values())
 
@@ -444,13 +444,13 @@ def _validate_relations(
         )
 
     # order_reviews.order_id -> orders.order_id
-    # missing_review_orders = set(reviews["order_id"]) - order_ids
+    missing_review_orders = set(reviews["order_id"]) - order_ids
 
-    # if missing_review_orders:
-    #     raise ValueError(
-    #         "Reviews reference order_id values that are absent from "
-    #         f"the orders table: {len(missing_review_orders):,}."
-    #     )
+    if missing_review_orders:
+        raise ValueError(
+            "Reviews reference order_id values that are absent from "
+            f"the orders table: {len(missing_review_orders):,}."
+        )
 
 
 def _validate_identity_semantics(
@@ -488,61 +488,121 @@ def _validate_identity_semantics(
     # level aggregation.
 
 
-def _report_data_quality(tables: dict[str, pd.DataFrame]) -> None:
-    """Report notable raw-data quality characteristics.
+# def _report_data_quality(tables: dict[str, pd.DataFrame]) -> list[dict]:
+def _report_data_quality(tables: dict[str, pd.DataFrame], *, verbose: bool = True) -> list[dict]:
+    """Collect notable raw-data quality characteristics.
 
-    These observations do not modify the data or cause loading to fail.
-    They are surfaced so that downstream feature engineering can make
-    explicit decisions about how to handle them.
+    Returns a list of findings, each a dict:
+        {"level": "INFO" | "WARN", "table": str, "message": str}
+
+    INFO  -> expected / no action needed
+    WARN  -> needs attention downstream (e.g. feature engineering)
     """
+    findings: list[dict] = []
     reviews = tables["order_reviews"]
     products = tables["products"]
+    orders = tables["orders"]
 
-    # Duplicate review IDs.
+    # Reviews linked to multiple orders.
+    #
+    # `review_id` is not a per-review identifier in Olist: a single review
+    # (identical score, comment, and timestamps) can legitimately be linked
+    # to more than one order_id.
     duplicate_review_ids = int(
         reviews["review_id"].duplicated(keep=False).sum()
     )
-
     if duplicate_review_ids:
-        warnings.warn(
-            "order_reviews contains "
-            f"{duplicate_review_ids:,} rows with duplicated review_id "
-            "values. The raw review records have been preserved.",
-            stacklevel=2,
-        )
+        findings.append({
+            "level": "INFO",
+            "table": "order_reviews",
+            "message": (
+                f"{duplicate_review_ids:,} rows where a review_id is linked "
+                "to more than one order_id. This is expected (the same review "
+                "can apply to multiple orders); no action needed."
+            ),
+        })
+
+    # Orders with multiple distinct reviews.
+    #
+    # Some orders received more than one distinct review over time
+    # (e.g. a revised or follow-up review with a different score).
+    # Feature engineering must pick one review per order_id
+    # before aggregating to customer_unique_id.
+    duplicate_order_reviews = int(
+        reviews["order_id"].duplicated(keep=False).sum()
+    )
+    if duplicate_order_reviews:
+        findings.append({
+            "level": "WARN",
+            "table": "order_reviews",
+            "message": (
+                f"{duplicate_order_reviews:,} rows where an order_id has "
+                "multiple distinct reviews (revised/follow-up reviews). "
+                "Feature engineering must pick one review per order before "
+                "customer-level aggregation (recommended: latest "
+                "review_answer_timestamp)."
+            ),
+        })
 
     # Missing product category names.
     missing_product_categories = int(
         products["product_category_name"].isna().sum()
     )
-
     if missing_product_categories:
-        warnings.warn(
-            "products contains "
-            f"{missing_product_categories:,} rows with missing "
-            "product_category_name values.",
-            stacklevel=2,
-        )
+        findings.append({
+            "level": "WARN",
+            "table": "products",
+            "message": (
+                f"{missing_product_categories:,} rows with missing "
+                "product_category_name values."
+            ),
+        })
 
     # Missing timestamps in orders.
-    orders = tables["orders"]
-
     timestamp_columns = DATE_COLUMNS.get("orders", [])
-
     for column in timestamp_columns:
         missing_count = int(orders[column].isna().sum())
-
         if missing_count:
-            warnings.warn(
-                f"orders.{column} contains "
-                f"{missing_count:,} missing values.",
-                stacklevel=2,
-            )
+            findings.append({
+                "level": "WARN",
+                "table": "orders",
+                "message": f"{column} contains {missing_count:,} missing values.",
+            })
+
+    if verbose:
+            _render_findings(findings)
 
 
-def validate_tables(tables: dict[str, pd.DataFrame]) -> None:
+def _render_findings(findings: list[dict]) -> None:
+    """Print a compact, grouped data-quality report."""
+    if not findings:
+        print("Data quality: no issues found.")
+        return
+
+    rule = "─" * 88
+    print(rule)
+    print("Data Quality Report")
+    print(rule)
+
+    headers = {
+        "INFO": "Informational",
+        "WARN": "Needs attention",
+    }
+
+    for level in ("INFO", "WARN"):
+        subset = [f for f in findings if f["level"] == level]
+        if not subset:
+            continue
+        print(f"\n{headers[level]}")
+        for f in subset:
+            print(f"  [{level}] {f['table']}: {f['message']}")
+
+    print("\n" + rule)
+
+
+def validate_tables(tables: dict[str, pd.DataFrame], *, verbose: bool = True) -> list[dict]:
     """Validate structure and report raw-data quality observations.
-
+    
     Structural violations raise exceptions. Data-quality observations are
     reported as warnings without modifying the raw tables.
     """
@@ -569,7 +629,7 @@ def validate_tables(tables: dict[str, pd.DataFrame]) -> None:
     _validate_relations(tables)
     _validate_identity_semantics(tables)
 
-    _report_data_quality(tables)
+    return _report_data_quality(tables, verbose=verbose)
 
 
 # ---------------------------------------------------------------------------
@@ -590,6 +650,5 @@ def load_olist(
     """
     resolved_dir = download_dataset(data_dir)
     tables = load_tables(resolved_dir)
-    validate_tables(tables)
 
     return tables
