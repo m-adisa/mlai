@@ -12,37 +12,8 @@ This module is responsible for:
 - reporting which customers are excluded at each stage,
   and validating the mathematical invariants those transforms depend on.
 
-Order population: only `order_status == 'delivered'` orders are used throughout. All order-level
-aggregations join at a safe grain (item -> product -> category, item ->
-order -> customer) using pandas `merge(..., validate=...)`, which
-hard-fails on any join that would multiply rows -- this is what rules
-out the row-multiplication bug documented in theoretical_foundation.md
-Sec. 1.2, structurally, not just by convention.
-
-Usage:
-
-    feats = build_customer_features(tables)
-    validate_features(feats, feats.attrs["category_columns"])
-
-    diagnostics = preprocessing_diagnostics(feats)   # d*, MFA eigenvalues,
-                                                      # DBSCAN eps (single
-                                                      # space Z), monetary skew
-
-`build_customer_features` reports population changes via warnings and
-via `feats.attrs["population_report"]`; it does not raise on its own
-population decisions (those are expected, documented exclusions, not
-errors). `validate_features` raises on invariant violations -- those
-would mean something is actually broken.
-
-NaN handling note: `fit_latent_space` (and therefore everything in
-`preprocessing_diagnostics` that depends on it) requires a dense numeric
-matrix, so it runs on the COMPLETE-CASE subset of customers (non-null
-avg_review_score and avg_delivery_delay). This module does not impute
-those columns for the full population -- that decision is still open
-and belongs wherever the final clustering input is assembled. The
-diagnostic numbers (d*, MFA weights, eps) are reported together with
-how many customers they were computed on, so that scope is visible
-rather than implicit.
+Order population: only `order_status == 'delivered'` orders are used throughout.
+All order-level aggregations join at a safe grain (item -> product -> category, item -> order -> customer)
 """
 
 from __future__ import annotations
@@ -63,46 +34,10 @@ from sklearn.preprocessing import StandardScaler
 
 DELIVERED_STATUS = "delivered"
 OTHER_CATEGORY_LABEL = "other"
-
-# Category selection: minimum number of categories needed to cover this
-# fraction of total spend (README-sourced, not theoretical_foundation.md --
-# see module docstring). Replaces a fixed top-N -- the number of
-# categories is now a computed quantity, re-derivable if the data changes,
-# rather than a guessed constant.
-#
-# 0.90, not the originally-discussed 0.95: at 0.95 coverage the category
-# block needed 33 categories, pushing d90 (components for 90% variance) to
-# 34 -- far above any reasonable d_max, so the PCA cap bound hard and
-# realized variance was only ~24%. At 0.90 coverage, 25 categories are
-# enough and d90 drops to 26, which is achievable without the cap
-# destroying fidelity (see DEFAULT_D_MAX below). This pair of constants
-# was calibrated together, against the real data -- not chosen
-# independently.
 DEFAULT_TARGET_SPEND_COVERAGE = 0.90
-
-# Multiplicative-replacement delta for CLR zero handling. Default matches
-# theoretical_foundation.md Sec. 2.2.3 / Sec. 7.1 (delta = 1 / C^2, where C
-# is the number of category columns including "other"). Exposed as a
-# parameter everywhere so the delta-sensitivity sweep the doc recommends
-# can be run from the notebook without editing this module.
-DEFAULT_DELTA = None  # resolved to 1 / C**2 per-call, C = n_category_cols
-
-# PCA / MFA defaults. var_target=0.90 is theoretical_foundation.md's own
-# heuristic (Sec. 3.3.1/7.1 -- "a default to be calibrated, not a
-# theorem"). d_max=26 is NOT that doc's default (it proposes 8) -- 26 is
-# this project's calibrated value, set to equal d90 at
-# DEFAULT_TARGET_SPEND_COVERAGE=0.90, confirmed empirically against the
-# real data (see fit_latent_space diagnostics), so that the cap does not
-# bind and realized variance actually reaches var_target. If
-# DEFAULT_TARGET_SPEND_COVERAGE changes, d90 changes, and this needs
-# re-deriving -- it is not independent of that constant.
+DEFAULT_DELTA = None
 DEFAULT_D_MAX = 26
 DEFAULT_VAR_TARGET = 0.90
-
-# DBSCAN min_samples heuristic (Ester et al., 1996 / Sander et al., 1998),
-# applied once, in the single latent space Z that both algorithms cluster
-# in (theoretical_foundation.md Sec. 3.3.2/4/5.1.2 -- "always within the
-# same latent space Z").
 MIN_SAMPLES_MULTIPLIER = 2
 
 
@@ -110,20 +45,12 @@ MIN_SAMPLES_MULTIPLIER = 2
 # ORDER-LEVEL PREPARATION
 # ---------------------------------------------------------------------------
 
-
 def valid_orders(tables: dict[str, pd.DataFrame]) -> pd.DataFrame:
     """Return one row per delivered order, keyed by customer_unique_id.
 
-    Joins orders -> customers (order_id's customer_id is 1:1 with both
-    tables, per data_loading.py's identity-semantics validation, so this
-    join cannot duplicate rows -- enforced here via validate="many_to_one",
-    which would raise if that assumption ever stopped holding). Filters to
-    `order_status == 'delivered'` (README "Data filtering rules").
-
     Columns: order_id, customer_unique_id, order_purchase_timestamp,
     order_estimated_delivery_date, order_delivered_customer_date,
-    delivery_delay_days (NaN where order_delivered_customer_date is null
-    -- not imputed, per README).
+    delivery_delay_days.
     """
     orders = tables["orders"]
     customers = tables["customers"]
@@ -142,10 +69,6 @@ def valid_orders(tables: dict[str, pd.DataFrame]) -> pd.DataFrame:
         delivered["order_delivered_customer_date"]
         - delivered["order_estimated_delivery_date"]
     ).dt.days
-    # Rows with a null actual delivery date naturally produce NaN above
-    # (not imputed); they are dropped only when averaging delay, in
-    # compute_extras(), not here -- they still count toward frequency
-    # and monetary.
 
     return delivered[
         [
@@ -161,10 +84,6 @@ def valid_orders(tables: dict[str, pd.DataFrame]) -> pd.DataFrame:
 
 def order_monetary(order_items: pd.DataFrame) -> pd.DataFrame:
     """Per-order monetary total: sum(price) + sum(freight_value).
-
-    Grouping by order_id before anything else is what keeps this safe --
-    order_items is one row per item, so this is a plain many-to-one
-    reduction, not a join that can multiply rows.
     """
     agg = order_items.groupby("order_id", as_index=False).agg(
         price_total=("price", "sum"),
@@ -181,19 +100,10 @@ def order_category_spend(
 ) -> pd.DataFrame:
     """Per (order_id, category_english) item-price spend.
 
-    Category spend uses `price` only, not freight -- freight is a shipping
-    cost, not a category-attributable amount (the RFM monetary feature
-    uses price + freight; this is a deliberate, narrower basis).
-
     Missing or untranslated product_category_name values are mapped to
     OTHER_CATEGORY_LABEL rather than dropped, so their spend still counts
     toward a customer's total (and therefore their category shares still
     sum to 1).
-
-    Join chain: order_items (many) -> products (one, on product_id) ->
-    category_translation (one, on product_category_name). Both joins are
-    declared many_to_one, so pandas raises if either relationship is ever
-    violated, rather than silently duplicating order_items rows.
     """
     merged = order_items.merge(
         products[["product_id", "product_category_name"]],
@@ -220,12 +130,6 @@ def order_category_spend(
 def deduplicated_order_reviews(order_reviews: pd.DataFrame) -> pd.DataFrame:
     """One review score per order_id: latest review_answer_timestamp wins.
 
-    Olist's order_reviews table is not 1-row-per-order: some orders
-    received multiple distinct reviews over time (see the dedup
-    investigation in this project's history). The composite key
-    (review_id, order_id) is already clean -- this function collapses a
-    different grain, order_id, which is what feature aggregation needs.
-
     Rule: for each order_id, keep the review with the latest
     review_answer_timestamp (the customer's final recorded sentiment).
     Ties broken by review_creation_date, then by review_id for a fully
@@ -251,24 +155,12 @@ def compute_rfm(
 ) -> pd.DataFrame:
     """Per-customer Recency, Frequency, Monetary.
 
-    Semantics, stated explicitly: Frequency and Monetary are computed
-    only over delivered orders that have at least one matching
-    order_items row (i.e. recoverable monetary data). An order with no
-    order_items match is excluded from both frequency and monetary for
-    that customer -- it does not reduce the customer's Recency, since
-    Recency only needs a purchase timestamp, not monetary data. The
-    count of excluded orders is reported via warning (diagnostic, not a
-    population decision made silently).
-
     Args:
         orders: output of valid_orders().
         monetary: output of order_monetary().
         reference_date: anchor for recency. Defaults to the max
             order_purchase_timestamp across `orders` (README: "relative
             to dataset max date").
-
-    Returns columns: customer_unique_id, recency_days, frequency,
-    monetary_raw, monetary (log1p of monetary_raw).
     """
     if reference_date is None:
         reference_date = orders["order_purchase_timestamp"].max()
@@ -297,13 +189,6 @@ def compute_rfm(
 
 def monetary_skew_report(rfm: pd.DataFrame) -> dict:
     """Diagnostic: does log1p actually tame monetary_raw's skew?
-
-    Not a theoretical_foundation.md section on its own, but a direct
-    consequence of its Sec. 2.1 argument (log1p compresses high-value
-    outliers) -- that argument predicts an effect, it does not confirm
-    the effect is large enough on THIS data. This computes both skews
-    so that's checked rather than assumed. Informational only; does not
-    raise or alter any feature.
     """
     raw_skew = float(skew(rfm["monetary_raw"]))
     log1p_skew = float(skew(rfm["monetary"]))
@@ -330,14 +215,6 @@ def select_categories_for_coverage(
     """Smallest set of categories (by spend, descending) whose cumulative
     spend reaches `target_coverage` of total spend, restricted to
     delivered orders.
-
-    README-sourced default (0.90), not theoretical_foundation.md -- the
-    recommendation being implemented here is: pick the category count
-    that achieves the target, then hold it fixed for the rest of the
-    project, rather than guessing a round number (the project's original
-    top-10 default was exactly such a guess). 0.90 rather than the
-    originally-discussed 0.95 because of its knock-on effect on PCA
-    fidelity -- see DEFAULT_TARGET_SPEND_COVERAGE's comment.
 
     OTHER_CATEGORY_LABEL is excluded from the candidate ranking -- it's
     a catch-all, not a category to select for coverage.
@@ -375,13 +252,8 @@ def multiplicative_replacement(
     shares: np.ndarray, delta: float | None = None
 ) -> np.ndarray:
     """Replace zero shares with delta, rescaling non-zeros so rows still
-    sum to 1. Verbatim per theoretical_foundation.md Sec. 2.2.3 / 7.1
-    (ground truth for this transform).
-
-    Rows that are entirely NaN (undefined composition -- see
-    compute_category_shares) pass through as NaN; this function does not
-    decide whether such rows belong in the final population, it only
-    avoids crashing on them.
+    sum to 1. 
+    Rows that are entirely NaN pass through as NaN.
     """
     shares = np.asarray(shares, dtype=float)
     delta = 1.0 / shares.shape[1] ** 2 if delta is None else delta
@@ -391,8 +263,7 @@ def multiplicative_replacement(
 
 
 def clr(shares: np.ndarray) -> np.ndarray:
-    """Centered log-ratio transform. Verbatim per
-    theoretical_foundation.md Sec. 2.2.2 / 7.1.
+    """Centered log-ratio transform.
     """
     log_shares = np.log(shares)
     return log_shares - log_shares.mean(axis=1, keepdims=True)
@@ -411,11 +282,6 @@ def compute_category_shares(
     len(selected_categories) + 1 dimensions and sums to 1 -- EXCEPT
     customers with zero total category spend (e.g. all-zero-price
     items), for whom a share vector is mathematically undefined (0/0).
-    This function does NOT drop those customers; it reports their count
-    via warning and returns them with NaN in every share/CLR column. The
-    decision of whether they belong in the final clustering population
-    is made by the caller (build_customer_features), not here -- feature
-    construction and population filtering are kept separate.
     """
     with_customer = category_spend.merge(
         orders[["order_id", "customer_unique_id"]],
@@ -483,12 +349,7 @@ def compute_extras(
 
     Both are left as NaN (not imputed) for customers with no eligible
     orders -- zero-review customers get no review score, and customers
-    whose every order has a null delivered_customer_date get no delay
-    (README "Data filtering rules"). This missingness is preserved in
-    the returned feature table; fit_latent_space() below restricts
-    itself to complete cases rather than imputing silently (see module
-    docstring) -- the decision of how the full population's missingness
-    should ultimately be handled stays open and visible, not made here.
+    whose every order has a null delivered_customer_date get no delay.
     """
     with_reviews = orders.merge(reviews, on="order_id", how="left", validate="one_to_one")
     assert len(with_reviews) == len(orders), "unexpected row multiplication joining reviews"
@@ -524,26 +385,13 @@ def build_customer_features(
 ) -> pd.DataFrame:
     """Build the full per-customer feature table.
 
-    Returns one row per customer_unique_id with both raw (interpretable,
-    for Route-A profiling per theoretical_foundation.md Sec. 6.2.2) and
-    feature-level-transformed columns:
+    Returns one row per customer_unique_id with both raw and feature-level-transformed columns:
 
         customer_unique_id
-        recency_days, frequency, monetary_raw, monetary            (RFM; monetary = log1p(monetary_raw); see compute_rfm for exact semantics)
+        recency_days, frequency, monetary_raw, monetary            (RFM; monetary = log1p(monetary_raw))
         category_share__<cat> ... category_share__other            (raw shares, sum to 1; categories chosen to cover target_spend_coverage of total spend)
         category_clr__<cat> ... category_clr__other                (CLR-transformed, model-ready)
         avg_review_score, avg_delivery_delay                       (NaN where not applicable -- not imputed)
-
-    Analytical population: the final population is the INTERSECTION of
-    customers with usable RFM data and customers with a defined (non-NaN)
-    category-share composition. This is an explicit decision made here,
-    not a side effect of a merge -- compute_category_shares() reports
-    invalid compositions but does not remove them; this function is what
-    removes them, and it reports exactly how many at each stage. The
-    full stage-by-stage counts are attached to the returned DataFrame as
-    `.attrs["population_report"]`, the category selection diagnostics as
-    `.attrs["category_selection"]`, and the final category column names
-    as `.attrs["category_columns"]` / `.attrs["category_clr_columns"]`.
     """
     orders = valid_orders(tables)
     monetary = order_monetary(tables["order_items"])
@@ -615,25 +463,6 @@ def validate_features(
     exclusions in build_customer_features(), everything checked here is
     expected to hold unconditionally; a failure means something is
     actually broken, not an expected data edge case.
-
-    Mirrors data_loading.py's validate_tables() -- call this
-    immediately after build_customer_features() before anything
-    downstream depends on the result:
-
-        feats = build_customer_features(tables)
-        validate_features(feats, feats.attrs["category_columns"],
-                           feats.attrs["category_clr_columns"])
-
-    Checks:
-    - customer_unique_id is unique (one row per customer)
-    - category shares are non-negative, <= 1, and sum to 1 within `tol`
-    - CLR columns sum to 0 within `tol`
-    - recency_days >= 0, frequency >= 1, monetary_raw >= 0
-
-    Row-multiplication from joins is NOT re-checked here -- it is
-    structurally prevented at join time in this module via
-    `merge(..., validate=...)` plus row-count asserts, so by the time a
-    DataFrame reaches this function that class of bug cannot be present.
     """
     if category_share_cols is None:
         category_share_cols = [c for c in features.columns if c.startswith("category_share__")]
@@ -695,41 +524,17 @@ def fit_latent_space(
 ) -> tuple[np.ndarray, np.ndarray, dict]:
     """Block-standardize -> MFA-weight -> global PCA.
 
-    Ground truth: theoretical_foundation.md Sec. 2.3-3.3 / 7.1
-    (`fit_latent_space` reference implementation). Adapted to this
-    project's existing columns: `monetary` is already log1p-transformed
-    (not re-applied here) and `category_clr__*` are already CLR-
-    transformed (reused directly rather than recomputed from raw shares).
-
-    Blocks: [recency_days, frequency, monetary] (RFM) /
-    [category_clr__*] (category) / [avg_review_score, avg_delivery_delay]
-    (extras).
-
-    Returns Z (theoretical_foundation.md Sec. 3.3.2) -- the single latent
-    space BOTH K-Means and DBSCAN cluster in (Sec. 4, Sec. 5.1.2: "always
-    within the same latent space Z"). The intermediate MFA-weighted,
-    pre-PCA matrix (A_MFA) is NOT returned -- it is not a space anything
-    clusters in, only an internal step toward Z, so there is no reason
-    for a caller to hold onto it.
-
     Runs on COMPLETE CASES ONLY -- MFA/PCA need a dense matrix, and
     avg_review_score / avg_delivery_delay contain NaN by design (see
     module docstring). Every fitted quantity (scaler, sigma_1, PCA) is
-    estimated on exactly the rows used here, consistent with
-    theoretical_foundation.md Sec. 5.3.1 (re-fit on resample, not a
-    frozen transform reused across subsamples).
+    estimated on exactly the rows used here.
 
     Returns:
         Z: (n_complete, d_star) latent space -- the clustering input.
         customer_ids: customer_unique_id for each row of Z, in order.
         diagnostics: n_customers_used/excluded, each block's sigma_1
             (first singular value -- MFA weight is 1/sigma_1), d90,
-            d_star, and realized cumulative variance at d_star (per
-            theoretical_foundation.md Sec. 3.3.1: "always report
-            realized variance", since the d_max cap can keep it below
-            var_target -- it does not, at this project's calibrated
-            defaults; diagnostics reports `cap_binding` so that stays
-            visible rather than assumed).
+            d_star, and realized cumulative variance at d_star.
     """
     category_clr_cols = [c for c in features.columns if c.startswith("category_clr__")]
     complete = features.dropna(subset=["avg_review_score", "avg_delivery_delay"])
@@ -764,10 +569,7 @@ def fit_latent_space(
 
 
 def eps_from_k_distance(Z: np.ndarray, min_samples: int) -> float:
-    """k-distance elbow (Kneedle). Ground truth verbatim:
-    theoretical_foundation.md Sec. 4.2.2 / 7.1. sklearn's DBSCAN counts
-    the point itself, so `min_samples` neighbours are queried including
-    self, to match it.
+    """k-distance elbow (Kneedle).
     """
     nn = NearestNeighbors(n_neighbors=min_samples).fit(Z)
     distances = np.sort(nn.kneighbors(Z)[0][:, -1])
@@ -779,8 +581,7 @@ def eps_from_k_distance(Z: np.ndarray, min_samples: int) -> float:
 
 
 def preprocessing_diagnostics(features: pd.DataFrame) -> dict:
-    """Bundle the diagnostic numbers clustering.py's parameters depend
-    on, computed once, here, so clustering.py only fits models.
+    """Bundle the diagnostic numbers that clustering parameters depend on.
 
     Returns a dict with:
         latent_space: fit_latent_space() diagnostics (d_star, realized
