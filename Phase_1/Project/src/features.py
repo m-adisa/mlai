@@ -580,19 +580,15 @@ def eps_from_k_distance(Z: np.ndarray, min_samples: int) -> float:
     return float(distances[idx])
 
 
-def preprocessing_diagnostics(features: pd.DataFrame) -> dict:
+def preprocessing_diagnostics(
+    features: pd.DataFrame,
+    *,
+    verbose: bool = True,
+) -> dict:
     """Bundle the diagnostic numbers that clustering parameters depend on.
 
-    Returns a dict with:
-        latent_space: fit_latent_space() diagnostics (d_star, realized
-            variance, MFA block sigma_1 values, complete-case count).
-        dbscan_eps: eps + min_samples, computed ONCE, in the single
-            latent space Z (theoretical_foundation.md Sec. 3.3.2/4:
-            both K-Means and DBSCAN cluster in the same Z -- there is no
-            second, separate DBSCAN space to compute eps for).
-        monetary_skew: raw-vs-log1p skew comparison.
-        category_selection: already attached to features.attrs, included
-            here too so this dict is a self-contained report.
+    Prints a formatted report when ``verbose`` is True (the default).
+    Returns the underlying dict either way.
     """
     Z, _, latent_diagnostics = fit_latent_space(features)
 
@@ -606,9 +602,51 @@ def preprocessing_diagnostics(features: pd.DataFrame) -> dict:
         else None
     )
 
-    return {
+    diagnostics = {
         "latent_space": latent_diagnostics,
         "dbscan_eps": {"eps": eps, "min_samples": min_samples},
         "monetary_skew": skew_report,
         "category_selection": features.attrs.get("category_selection"),
     }
+
+    if verbose:
+        _render_diagnostics(diagnostics)
+
+    return diagnostics
+
+
+def _render_diagnostics(diagnostics: dict) -> None:
+    """Print a nested diagnostics dict in an aligned, grouped layout."""
+    print("Preprocessing diagnostics")
+    print("=" * 60)
+    for section, values in diagnostics.items():
+        _print_section(values, title=f"[{section}]")
+        print()
+
+
+def _print_section(d, indent: int = 0, title: str | None = None) -> None:
+    pad = "  " * indent
+    if title is not None:
+        print(f"{pad}{title}")
+
+    if not isinstance(d, dict):
+        print(f"{pad}{d}")
+        return
+
+    key_w = max((len(str(k)) for k in d), default=0)
+    for key, value in d.items():
+        if isinstance(value, dict):
+            print(f"{pad}{key}:")
+            _print_section(value, indent + 1)
+        else:
+            print(f"{pad}{key:<{key_w}}  {_fmt_scalar(value)}")
+
+
+def _fmt_scalar(v) -> str:
+    if isinstance(v, bool):
+        return str(v)
+    if isinstance(v, float):
+        return f"{v:,.4f}"
+    if isinstance(v, int):
+        return f"{v:,}"
+    return str(v)
