@@ -5,10 +5,12 @@ This module is responsible for:
 - computing RFM, category-preference, and marketplace-extras features,
 - applying the feature-level transforms (log1p on monetary, CLR on
   category shares),
-- building the single MFA-weighted, PCA-reduced latent space Z that
-  the clustering algorithms run in, and the diagnostic numbers that
-  parameterize it (PCA component count, MFA block eigenvalues, DBSCAN
-  eps, the category-coverage threshold, and a monetary skew check),
+- building the MFA-weighted, PCA-reduced latent space Z that the
+  clustering algorithms run in -- two variants, without and with
+  block_balance (see fit_latent_space) -- and the diagnostic numbers
+  that parameterize them (PCA component count, MFA block eigenvalues,
+  block variance shares, DBSCAN eps, the category-coverage threshold,
+  and a monetary skew check),
 - reporting which customers are excluded at each stage,
   and validating the mathematical invariants those transforms depend on.
 
@@ -521,8 +523,23 @@ def fit_latent_space(
     features: pd.DataFrame,
     d_max: int = DEFAULT_D_MAX,
     var_target: float = DEFAULT_VAR_TARGET,
+    block_balance: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, dict]:
-    """Block-standardize -> MFA-weight -> global PCA.
+    """Block-standardize -> MFA-weight -> (block balance) -> global PCA.
+
+    block_balance=False is the math doc's pipeline: MFA equalizes each
+    block's first axis only, so the 26-column category block still holds
+    most of the total variance.
+
+    block_balance=True adds one step after MFA weighting: every block is
+    rescaled to the same total variance (a third each). This goes beyond
+    the math doc. Rescaling each block by its own total cancels MFA's
+    per-block scaling, so the result is consensus-PCA-style block scaling
+    (Westerhuis, Kourti & MacGregor, 1998), not standard MFA.
+
+    Global PCA runs in both cases. Equal total variance is not equal
+    influence on the clustering: a block spread over many axes has weak
+    variance per axis, and PCA/K-Means follow the strong axes.
 
     Runs on COMPLETE CASES ONLY -- MFA/PCA need a dense matrix, and
     avg_review_score / avg_delivery_delay contain NaN by design (see
@@ -534,7 +551,10 @@ def fit_latent_space(
         customer_ids: customer_unique_id for each row of Z, in order.
         diagnostics: n_customers_used/excluded, each block's sigma_1
             (first singular value -- MFA weight is 1/sigma_1), d90,
-            d_star, and realized cumulative variance at d_star.
+            d_star, realized cumulative variance at d_star, and
+            block_variance: each block's share of the total variance
+            before PCA, its share of the variance kept in Z, and the
+            fraction of its own variance that survives the PCA cut.
     """
     category_clr_cols = [c for c in features.columns if c.startswith("category_clr__")]
     complete = features.dropna(subset=["avg_review_score", "avg_delivery_delay"])
@@ -545,19 +565,37 @@ def fit_latent_space(
 
     blocks_std = [StandardScaler().fit_transform(b) for b in (rfm_block, cat_block, extras_block)]
     sigma1 = [float(np.linalg.svd(b, compute_uv=False)[0]) for b in blocks_std]
-    mfa_weighted = np.hstack([b / s for b, s in zip(blocks_std, sigma1)])
+    weighted = [b / s for b, s in zip(blocks_std, sigma1)]
+    if block_balance:
+        weighted = [w / np.sqrt((w ** 2).sum()) for w in weighted]
+    A = np.hstack(weighted)
 
-    pca = PCA().fit(mfa_weighted)
+    pca = PCA().fit(A)
     cum_var = np.cumsum(pca.explained_variance_ratio_)
     d90 = int(np.searchsorted(cum_var, var_target) + 1)
     d_star = min(d90, d_max)
-    Z = pca.transform(mfa_weighted)[:, :d_star]
+    Z = pca.transform(A)[:, :d_star]
+
+    # How much of each block survives the PCA cut (A is centered).
+    loadings = pca.components_[:d_star].T
+    A_kept = (A @ loadings) @ loadings.T
+    edges = np.cumsum([0] + [w.shape[1] for w in weighted])
+    names = ("rfm", "category", "extras")
+    before = [float((A[:, i:j] ** 2).sum()) for i, j in zip(edges[:-1], edges[1:])]
+    kept = [float((A_kept[:, i:j] ** 2).sum()) for i, j in zip(edges[:-1], edges[1:])]
+    block_variance = {
+        "share_before_pca": {n: x / sum(before) for n, x in zip(names, before)},
+        "share_in_Z": {n: x / sum(kept) for n, x in zip(names, kept)},
+        "fraction_kept_in_Z": {n: k / b for n, k, b in zip(names, kept, before)},
+    }
 
     diagnostics = {
+        "block_balance": block_balance,
         "n_customers_used": len(complete),
         "n_customers_excluded_missing_extras": len(features) - len(complete),
         "block_sigma1": {"rfm": sigma1[0], "category": sigma1[1], "extras": sigma1[2]},
-        "n_raw_features": mfa_weighted.shape[1],
+        "block_variance": block_variance,
+        "n_raw_features": A.shape[1],
         "d90": d90,
         "d_max": d_max,
         "d_star": d_star,
@@ -585,32 +623,41 @@ def preprocessing_diagnostics(
     *,
     verbose: bool = True,
 ) -> dict:
-    """Bundle the diagnostic numbers that clustering parameters depend on.
+    """Bundle the diagnostic numbers that clustering parameters depend on,
+    for both latent spaces: "mfa_space" (no block_balance) and
+    "balanced_space" (block_balance=True). Each space gets its own latent
+    diagnostics and its own DBSCAN (eps, min_samples), since both depend
+    on that space's dimensionality. Metrics from the two spaces are not
+    comparable with each other.
 
     Prints a formatted report when ``verbose`` is True (the default).
-    Returns the underlying dict either way.
+    Returns the underlying dict either way -- assign the result in a
+    notebook (``diagnostics = preprocessing_diagnostics(feats)``) so the
+    dict is not echoed under the printed report.
     """
-    Z, _, latent_diagnostics = fit_latent_space(features)
-
-    min_samples = MIN_SAMPLES_MULTIPLIER * Z.shape[1]
-    eps = eps_from_k_distance(Z, min_samples)
+    diagnostics = {}
+    for name, balance in (("mfa_space", False), ("balanced_space", True)):
+        Z, _, latent_diagnostics = fit_latent_space(features, block_balance=balance)
+        min_samples = MIN_SAMPLES_MULTIPLIER * Z.shape[1]
+        diagnostics[name] = {
+            "latent_space": latent_diagnostics,
+            "dbscan_eps": {
+                "eps": eps_from_k_distance(Z, min_samples),
+                "min_samples": min_samples,
+            },
+        }
 
     rfm_cols_present = {"recency_days", "frequency", "monetary_raw", "monetary"}
-    skew_report = (
+    diagnostics["monetary_skew"] = (
         monetary_skew_report(features)
         if rfm_cols_present.issubset(features.columns)
         else None
     )
-
-    diagnostics = {
-        "latent_space": latent_diagnostics,
-        "dbscan_eps": {"eps": eps, "min_samples": min_samples},
-        "monetary_skew": skew_report,
-        "category_selection": features.attrs.get("category_selection"),
-    }
+    diagnostics["category_selection"] = features.attrs.get("category_selection")
 
     if verbose:
         _render_diagnostics(diagnostics)
+    return diagnostics
 
 
 def _render_diagnostics(diagnostics: dict) -> None:
