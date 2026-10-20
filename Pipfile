@@ -16,6 +16,7 @@ kagglehub = "*"
 kneed = "*"
 jupyter = "*"
 ipywidgets = "*"
+dbcv = {git = "https://github.com/FelSiq/DBCV"}
 
 [dev-packages]
 ipykernel = "*"
