@@ -537,10 +537,7 @@ def _report_data_quality(tables: dict[str, pd.DataFrame], *, verbose: bool = Tru
             "table": "order_reviews",
             "message": (
                 f"{duplicate_order_reviews:,} rows where an order_id has "
-                "multiple distinct reviews (revised/follow-up reviews). "
-                "Feature engineering must pick one review per order before "
-                "customer-level aggregation (recommended: latest "
-                "review_answer_timestamp)."
+                "multiple distinct reviews (revised/follow-up reviews)."
             ),
         })
 

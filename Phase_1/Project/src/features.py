@@ -2,20 +2,30 @@
 
 This module is responsible for:
 - aggregating order-level data to the `customer_unique_id` grain,
+- splitting customers into train and test sets (customer-level, stratified
+  on the repeat-purchase flag) before anything population-fitted is computed,
 - computing RFM, category-preference, and marketplace-extras features,
 - applying the feature-level transforms (log1p on monetary, CLR on
   category shares),
 - building the MFA-weighted, PCA-reduced latent space Z that the
   clustering algorithms run in -- two variants, without and with
-  block_balance (see fit_latent_space) -- and the diagnostic numbers
-  that parameterize them (PCA component count, MFA block eigenvalues,
-  block variance shares, DBSCAN eps, the category-coverage threshold,
-  and a monetary skew check),
+  block_balance (see LatentSpace / fit_latent_space) -- fitted on train and
+  applied unchanged to test, and the diagnostic numbers that parameterize
+  them (PCA component count, MFA block eigenvalues, block variance shares,
+  DBSCAN eps, the category-coverage threshold, and a monetary skew check),
 - reporting which customers are excluded at each stage,
   and validating the mathematical invariants those transforms depend on.
 
 Order population: only `order_status == 'delivered'` orders are used throughout.
 All order-level aggregations join at a safe grain (item -> product -> category, item -> order -> customer)
+
+Train/test protocol: the split is made on customer_unique_id. Every
+population-fitted quantity (category selection, block scalers, MFA sigma_1,
+block-balance norms, PCA, d_star, DBSCAN eps) is estimated on train only.
+Test rows only ever go through `LatentSpace.transform`. The one shared
+constant is `reference_date` (the dataset's last purchase timestamp): it is a
+calendar anchor, not a fitted statistic, and sharing it keeps recency on one
+scale and non-negative for both sides.
 """
 
 from __future__ import annotations
@@ -27,6 +37,7 @@ import pandas as pd
 from kneed import KneeLocator
 from scipy.stats import skew
 from sklearn.decomposition import PCA
+from sklearn.model_selection import train_test_split
 from sklearn.neighbors import NearestNeighbors
 from sklearn.preprocessing import StandardScaler
 
@@ -36,11 +47,18 @@ from sklearn.preprocessing import StandardScaler
 
 DELIVERED_STATUS = "delivered"
 OTHER_CATEGORY_LABEL = "other"
-DEFAULT_TARGET_SPEND_COVERAGE = 0.90
+DEFAULT_TARGET_SPEND_COVERAGE = 0.87
 DEFAULT_DELTA = None
 DEFAULT_D_MAX = 26
-DEFAULT_VAR_TARGET = 0.90
+DEFAULT_VAR_TARGET = 0.87
 MIN_SAMPLES_MULTIPLIER = 2
+
+TEST_SIZE = 0.45
+SPLIT_RANDOM_STATE = 42
+
+RFM_COLUMNS = ("recency_days", "frequency", "monetary")
+EXTRAS_COLUMNS = ("avg_review_score", "avg_delivery_delay")
+BLOCK_NAMES = ("rfm", "category", "extras")
 
 
 # ---------------------------------------------------------------------------
@@ -250,6 +268,37 @@ def select_categories_for_coverage(
     return categories, diagnostics
 
 
+def category_coverage_of(
+    category_spend: pd.DataFrame,
+    orders: pd.DataFrame,
+    categories: list[str],
+) -> dict:
+    """Coverage diagnostics for a PROVIDED category list on this
+    population (used for the test side, whose categories are fixed from
+    train). Same definition as select_categories_for_coverage: share of
+    non-OTHER spend that the listed categories account for.
+    """
+    in_scope = category_spend[category_spend["order_id"].isin(orders["order_id"])]
+    ranked = (
+        in_scope[in_scope["category_english"] != OTHER_CATEGORY_LABEL]
+        .groupby("category_english")["category_spend"]
+        .sum()
+    )
+    total_spend = float(ranked.sum())
+    achieved = (
+        float(ranked.reindex(categories).fillna(0.0).sum() / total_spend)
+        if total_spend > 0
+        else float("nan")
+    )
+    return {
+        "target_coverage": None,
+        "n_categories": len(categories),
+        "achieved_coverage": achieved,
+        "n_categories_total": len(ranked),
+        "source": "provided (train selection)",
+    }
+
+
 def multiplicative_replacement(
     shares: np.ndarray, delta: float | None = None
 ) -> np.ndarray:
@@ -374,16 +423,14 @@ def compute_extras(
     return extras
 
 
-# ---------------------------------------------------------------------------
-# PUBLIC ENTRY POINT -- FEATURE TABLE
-# ---------------------------------------------------------------------------
-
-
 def build_customer_features(
     tables: dict[str, pd.DataFrame],
     target_spend_coverage: float = DEFAULT_TARGET_SPEND_COVERAGE,
     delta: float | None = None,
     reference_date: pd.Timestamp | None = None,
+    *,
+    customer_ids: np.ndarray | None = None,
+    selected_categories: list[str] | None = None,
 ) -> pd.DataFrame:
     """Build the full per-customer feature table.
 
@@ -394,8 +441,19 @@ def build_customer_features(
         category_share__<cat> ... category_share__other            (raw shares, sum to 1; categories chosen to cover target_spend_coverage of total spend)
         category_clr__<cat> ... category_clr__other                (CLR-transformed, model-ready)
         avg_review_score, avg_delivery_delay                       (NaN where not applicable -- not imputed)
+
+    Optional keyword-only arguments (both default to None = original
+    behavior, i.e. the whole delivered-order population and categories
+    selected from it):
+
+        customer_ids: restrict the population to these customer_unique_ids.
+        selected_categories: use this fixed category list instead of
+            selecting one from the population. build_train_test_features()
+            passes the train-selected list when building the test side.
     """
     orders = valid_orders(tables)
+    if customer_ids is not None:
+        orders = orders[orders["customer_unique_id"].isin(customer_ids)]
     monetary = order_monetary(tables["order_items"])
     cat_spend = order_category_spend(
         tables["order_items"], tables["products"], tables["category_translation"]
@@ -408,9 +466,15 @@ def build_customer_features(
     rfm = compute_rfm(orders, monetary, reference_date=reference_date)
     stages["rfm_eligible_customers"] = len(rfm)
 
-    selected_categories, category_selection_diagnostics = select_categories_for_coverage(
-        cat_spend, orders, target_coverage=target_spend_coverage
-    )
+    if selected_categories is None:
+        selected_categories, category_selection_diagnostics = select_categories_for_coverage(
+            cat_spend, orders, target_coverage=target_spend_coverage
+        )
+    else:
+        selected_categories = list(selected_categories)
+        category_selection_diagnostics = category_coverage_of(
+            cat_spend, orders, selected_categories
+        )
     categories = compute_category_shares(cat_spend, orders, selected_categories, delta=delta)
     stages["category_table_customers"] = len(categories)
 
@@ -447,11 +511,100 @@ def build_customer_features(
 
     features.attrs["population_report"] = stages
     features.attrs["category_selection"] = category_selection_diagnostics
+    features.attrs["selected_categories"] = list(selected_categories)
     features.attrs["category_columns"] = category_cols
     features.attrs["category_clr_columns"] = [
         c for c in categories_valid.columns if c.startswith("category_clr__")
     ]
     return features
+
+
+# ---------------------------------------------------------------------------
+# TRAIN / TEST SPLIT
+# ---------------------------------------------------------------------------
+
+
+def split_customers(
+    tables: dict[str, pd.DataFrame],
+    test_size: float = TEST_SIZE,
+    random_state: int = SPLIT_RANDOM_STATE,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Split RFM-eligible customers (>= 1 delivered order with items) into
+    train and test customer_unique_id arrays.
+
+    The split is by customer, never by order, so a customer's orders are
+    never on both sides. It is stratified on the repeat-purchase flag
+    (frequency >= 2, with frequency counted exactly as compute_rfm counts
+    it) so the repeat track is represented proportionally in both sides.
+    """
+    orders = valid_orders(tables)
+    monetary = order_monetary(tables["order_items"])
+    with_items = orders.merge(
+        monetary[["order_id"]], on="order_id", how="inner", validate="one_to_one"
+    )
+    n_orders = with_items.groupby("customer_unique_id").size().sort_index()
+
+    ids = n_orders.index.to_numpy()
+    is_repeat = n_orders.to_numpy() >= 2
+
+    train_ids, test_ids = train_test_split(
+        ids,
+        test_size=test_size,
+        random_state=random_state,
+        shuffle=True,
+        stratify=is_repeat,
+    )
+    return train_ids, test_ids
+
+# ---------------------------------------------------------------------------
+# PUBLIC ENTRY POINT -- FEATURE TABLE
+# ---------------------------------------------------------------------------
+
+
+def build_train_test_features(
+    tables: dict[str, pd.DataFrame],
+    test_size: float = TEST_SIZE,
+    random_state: int = SPLIT_RANDOM_STATE,
+    target_spend_coverage: float = DEFAULT_TARGET_SPEND_COVERAGE,
+    delta: float | None = None,
+    reference_date: pd.Timestamp | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Build (train_features, test_features) with no test leakage.
+
+    1. Split customers (split_customers).
+    2. Build train features; category selection runs on train orders only.
+    3. Build test features with the train-selected category list, so both
+       tables have identical category columns.
+
+    reference_date defaults to the dataset-wide last purchase timestamp
+    (same anchor build_customer_features(tables) uses), shared by both
+    sides. Both tables have the same columns and attrs as the output of
+    build_customer_features(), plus attrs["split"].
+    """
+    train_ids, test_ids = split_customers(tables, test_size, random_state)
+    if reference_date is None:
+        reference_date = valid_orders(tables)["order_purchase_timestamp"].max()
+
+    train = build_customer_features(
+        tables, target_spend_coverage, delta, reference_date, customer_ids=train_ids
+    )
+    test = build_customer_features(
+        tables,
+        target_spend_coverage,
+        delta,
+        reference_date,
+        customer_ids=test_ids,
+        selected_categories=train.attrs["selected_categories"],
+    )
+
+    for role, table, ids in (("train", train, train_ids), ("test", test, test_ids)):
+        table.attrs["split"] = {
+            "role": role,
+            "test_size": test_size,
+            "random_state": random_state,
+            "n_assigned": int(len(ids)),
+        }
+    return train, test
 
 
 def validate_features(
@@ -508,6 +661,9 @@ def validate_features(
 def repeat_customers_only(features: pd.DataFrame) -> pd.DataFrame:
     """Subset the full-base feature table to the repeat-purchase track
     (frequency >= 2), per README's two-track design. Preserves .attrs.
+
+    Apply to the train and the test table separately: the full base is
+    split once, and each side's repeat track is derived from its own side.
     """
     subset = features[features["frequency"] >= 2].reset_index(drop=True)
     subset.attrs = features.attrs
@@ -517,6 +673,176 @@ def repeat_customers_only(features: pd.DataFrame) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 # PREPROCESSING / LATENT SPACE -- feeds clustering.py
 # ---------------------------------------------------------------------------
+
+
+def _projection_energy(
+    A: np.ndarray, pca: PCA, d_star: int, edges: np.ndarray
+) -> tuple[list[float], list[float]]:
+    """Per-block sum of squares of the (PCA-centered) design matrix before
+    and after projecting onto the first d_star train components."""
+    centered = A - pca.mean_
+    loadings = pca.components_[:d_star].T
+    kept_matrix = (centered @ loadings) @ loadings.T
+    before = [float((centered[:, i:j] ** 2).sum()) for i, j in zip(edges[:-1], edges[1:])]
+    kept = [float((kept_matrix[:, i:j] ** 2).sum()) for i, j in zip(edges[:-1], edges[1:])]
+    return before, kept
+
+
+def _variance_stats(before: list[float], kept: list[float], n_rows: int) -> dict:
+    return {
+        "share_before_pca": {n: x / sum(before) for n, x in zip(BLOCK_NAMES, before)},
+        "share_in_Z": {n: x / sum(kept) for n, x in zip(BLOCK_NAMES, kept)},
+        "fraction_kept_in_Z": {n: k / b for n, k, b in zip(BLOCK_NAMES, kept, before)},
+        "realized_variance": sum(kept) / sum(before),
+        "reconstruction_mse": (sum(before) - sum(kept)) / n_rows,
+    }
+
+
+class LatentSpace:
+    """Block-standardize -> MFA-weight -> (block balance) -> global PCA,
+    fitted on one table and applicable to another.
+
+    fit(train) estimates and stores everything population-dependent: the
+    per-block scalers, per-block sigma_1 (MFA weight = 1/sigma_1), the
+    block-balance norms (block_balance=True only), the PCA, d90 and d_star.
+    transform(other) applies those stored quantities without refitting.
+
+    Complete cases only: rows with NaN avg_review_score or
+    avg_delivery_delay are excluded from fit and from transform alike
+    (MFA/PCA need a dense matrix; see module docstring).
+
+    After fit(): Z_ (train latent space), customer_ids_ (its row order),
+    diagnostics_ (identical in content to the diagnostics
+    fit_latent_space() has always returned).
+    """
+
+    def __init__(
+        self,
+        block_balance: bool = False,
+        d_max: int = DEFAULT_D_MAX,
+        var_target: float = DEFAULT_VAR_TARGET,
+    ):
+        self.block_balance = block_balance
+        self.d_max = d_max
+        self.var_target = var_target
+
+    # -- internals ---------------------------------------------------------
+
+    def _complete(self, features: pd.DataFrame) -> pd.DataFrame:
+        return features.dropna(subset=list(EXTRAS_COLUMNS))
+
+    def _blocks(self, complete: pd.DataFrame) -> list[np.ndarray]:
+        missing = [c for cols in self.block_columns_ for c in cols if c not in complete.columns]
+        if missing:
+            raise ValueError(f"features is missing columns the latent space was fitted on: {missing}")
+        return [complete[cols].to_numpy() for cols in self.block_columns_]
+
+    def _assemble(self, blocks: list[np.ndarray]) -> np.ndarray:
+        weighted = [
+            scaler.transform(b) / s
+            for scaler, b, s in zip(self.scalers_, blocks, self.sigma1_)
+        ]
+        if self.block_balance:
+            weighted = [w / n for w, n in zip(weighted, self.balance_norms_)]
+        return np.hstack(weighted)
+
+    # -- fit / transform ---------------------------------------------------
+
+    def fit(self, features: pd.DataFrame) -> "LatentSpace":
+        category_clr_cols = [c for c in features.columns if c.startswith("category_clr__")]
+        self.block_columns_ = [list(RFM_COLUMNS), category_clr_cols, list(EXTRAS_COLUMNS)]
+
+        complete = self._complete(features)
+        blocks = self._blocks(complete)
+
+        self.scalers_ = [StandardScaler().fit(b) for b in blocks]
+        blocks_std = [s.transform(b) for s, b in zip(self.scalers_, blocks)]
+        self.sigma1_ = [float(np.linalg.svd(b, compute_uv=False)[0]) for b in blocks_std]
+        weighted = [b / s for b, s in zip(blocks_std, self.sigma1_)]
+        self.balance_norms_ = (
+            [float(np.sqrt((w ** 2).sum())) for w in weighted] if self.block_balance else None
+        )
+
+        A = self._assemble(blocks)
+        self.edges_ = np.cumsum([0] + [b.shape[1] for b in blocks])
+
+        self.pca_ = PCA().fit(A)
+        cum_var = np.cumsum(self.pca_.explained_variance_ratio_)
+        self.d90_ = int(np.searchsorted(cum_var, self.var_target) + 1)
+        self.d_star_ = min(self.d90_, self.d_max)
+
+        self.Z_ = self.pca_.transform(A)[:, : self.d_star_]
+        self.customer_ids_ = complete["customer_unique_id"].to_numpy()
+
+        before, kept = _projection_energy(A, self.pca_, self.d_star_, self.edges_)
+        self.train_stats_ = _variance_stats(before, kept, len(A))
+        block_variance = {
+            k: self.train_stats_[k]
+            for k in ("share_before_pca", "share_in_Z", "fraction_kept_in_Z")
+        }
+
+        self.diagnostics_ = {
+            "block_balance": self.block_balance,
+            "n_customers_used": len(complete),
+            "n_customers_excluded_missing_extras": len(features) - len(complete),
+            "block_sigma1": dict(zip(BLOCK_NAMES, self.sigma1_)),
+            "block_variance": block_variance,
+            "n_raw_features": A.shape[1],
+            "d90": self.d90_,
+            "d_max": self.d_max,
+            "d_star": self.d_star_,
+            "var_target": self.var_target,
+            "realized_variance": float(cum_var[self.d_star_ - 1]),
+            "cap_binding": self.d90_ > self.d_max,
+        }
+        return self
+
+    def transform(self, features: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
+        """Project another table into the fitted space. Nothing is refitted.
+
+        Returns (Z, customer_ids) for the complete-case rows of `features`.
+        """
+        complete = self._complete(features)
+        A = self._assemble(self._blocks(complete))
+        Z = self.pca_.transform(A)[:, : self.d_star_]
+        return Z, complete["customer_unique_id"].to_numpy()
+
+    def diagnose(self, features: pd.DataFrame) -> dict:
+        """Held-out latent-space diagnostics, train vs. `features`.
+
+        The train PCA is applied to `features`; how much of its variance
+        the d_star train components capture, and how well each block is
+        represented, is compared with the same numbers on train.
+        """
+        complete = self._complete(features)
+        A = self._assemble(self._blocks(complete))
+        before, kept = _projection_energy(A, self.pca_, self.d_star_, self.edges_)
+        test = _variance_stats(before, kept, len(A))
+        train = self.train_stats_
+
+        def pair(key: str) -> dict:
+            return {n: {"train": train[key][n], "test": test[key][n]} for n in BLOCK_NAMES}
+
+        return {
+            "n_customers_used": len(complete),
+            "n_customers_excluded_missing_extras": len(features) - len(complete),
+            "d_star": self.d_star_,
+            "realized_variance": {
+                "train": train["realized_variance"],
+                "test": test["realized_variance"],
+                "gap": train["realized_variance"] - test["realized_variance"],
+            },
+            # Per-row reconstruction error of test relative to train (1.0 =
+            # same; > 1 means the train PCA represents test rows worse).
+            "reconstruction_error_ratio": (
+                test["reconstruction_mse"] / train["reconstruction_mse"]
+            ),
+            "block_variance": {
+                "share_before_pca": pair("share_before_pca"),
+                "share_in_Z": pair("share_in_Z"),
+                "fraction_kept_in_Z": pair("fraction_kept_in_Z"),
+            },
+        }
 
 
 def fit_latent_space(
@@ -546,6 +872,10 @@ def fit_latent_space(
     module docstring). Every fitted quantity (scaler, sigma_1, PCA) is
     estimated on exactly the rows used here.
 
+    This is a thin wrapper over LatentSpace().fit(features); call
+    LatentSpace directly when the fitted space must be applied to other
+    rows (e.g. the test set).
+
     Returns:
         Z: (n_complete, d_star) latent space -- the clustering input.
         customer_ids: customer_unique_id for each row of Z, in order.
@@ -556,54 +886,9 @@ def fit_latent_space(
             before PCA, its share of the variance kept in Z, and the
             fraction of its own variance that survives the PCA cut.
     """
-    category_clr_cols = [c for c in features.columns if c.startswith("category_clr__")]
-    complete = features.dropna(subset=["avg_review_score", "avg_delivery_delay"])
-
-    rfm_block = complete[["recency_days", "frequency", "monetary"]].to_numpy()
-    cat_block = complete[category_clr_cols].to_numpy()
-    extras_block = complete[["avg_review_score", "avg_delivery_delay"]].to_numpy()
-
-    blocks_std = [StandardScaler().fit_transform(b) for b in (rfm_block, cat_block, extras_block)]
-    sigma1 = [float(np.linalg.svd(b, compute_uv=False)[0]) for b in blocks_std]
-    weighted = [b / s for b, s in zip(blocks_std, sigma1)]
-    if block_balance:
-        weighted = [w / np.sqrt((w ** 2).sum()) for w in weighted]
-    A = np.hstack(weighted)
-
-    pca = PCA().fit(A)
-    cum_var = np.cumsum(pca.explained_variance_ratio_)
-    d90 = int(np.searchsorted(cum_var, var_target) + 1)
-    d_star = min(d90, d_max)
-    Z = pca.transform(A)[:, :d_star]
-
-    # How much of each block survives the PCA cut (A is centered).
-    loadings = pca.components_[:d_star].T
-    A_kept = (A @ loadings) @ loadings.T
-    edges = np.cumsum([0] + [w.shape[1] for w in weighted])
-    names = ("rfm", "category", "extras")
-    before = [float((A[:, i:j] ** 2).sum()) for i, j in zip(edges[:-1], edges[1:])]
-    kept = [float((A_kept[:, i:j] ** 2).sum()) for i, j in zip(edges[:-1], edges[1:])]
-    block_variance = {
-        "share_before_pca": {n: x / sum(before) for n, x in zip(names, before)},
-        "share_in_Z": {n: x / sum(kept) for n, x in zip(names, kept)},
-        "fraction_kept_in_Z": {n: k / b for n, k, b in zip(names, kept, before)},
-    }
-
-    diagnostics = {
-        "block_balance": block_balance,
-        "n_customers_used": len(complete),
-        "n_customers_excluded_missing_extras": len(features) - len(complete),
-        "block_sigma1": {"rfm": sigma1[0], "category": sigma1[1], "extras": sigma1[2]},
-        "block_variance": block_variance,
-        "n_raw_features": A.shape[1],
-        "d90": d90,
-        "d_max": d_max,
-        "d_star": d_star,
-        "var_target": var_target,
-        "realized_variance": float(cum_var[d_star - 1]),
-        "cap_binding": d90 > d_max,
-    }
-    return Z, complete["customer_unique_id"].to_numpy(), diagnostics
+    model = LatentSpace(block_balance=block_balance, d_max=d_max, var_target=var_target)
+    model.fit(features)
+    return model.Z_, model.customer_ids_, model.diagnostics_
 
 
 def eps_from_k_distance(Z: np.ndarray, min_samples: int) -> float:
@@ -620,6 +905,7 @@ def eps_from_k_distance(Z: np.ndarray, min_samples: int) -> float:
 
 def preprocessing_diagnostics(
     features: pd.DataFrame,
+    test_features: pd.DataFrame | None = None,
     *,
     verbose: bool = True,
 ) -> dict:
@@ -630,22 +916,30 @@ def preprocessing_diagnostics(
     on that space's dimensionality. Metrics from the two spaces are not
     comparable with each other.
 
+    `features` is the TRAIN table: every fitted number here comes from it.
+    If `test_features` is given, each space also gets a
+    "heldout_latent_space" section (train PCA applied to test, train vs.
+    test side by side) and a "split" section is added. With
+    test_features=None the output is unchanged from before the split.
+
     Prints a formatted report when ``verbose`` is True (the default).
     Returns the underlying dict either way -- assign the result in a
-    notebook (``diagnostics = preprocessing_diagnostics(feats)``) so the
+    notebook (``diagnostics = preprocessing_diagnostics(train_feats, test_feats)``) so the
     dict is not echoed under the printed report.
     """
     diagnostics = {}
     for name, balance in (("mfa_space", False), ("balanced_space", True)):
-        Z, _, latent_diagnostics = fit_latent_space(features, block_balance=balance)
-        min_samples = MIN_SAMPLES_MULTIPLIER * Z.shape[1]
+        model = LatentSpace(block_balance=balance).fit(features)
+        min_samples = MIN_SAMPLES_MULTIPLIER * model.Z_.shape[1]
         diagnostics[name] = {
-            "latent_space": latent_diagnostics,
+            "latent_space": model.diagnostics_,
             "dbscan_eps": {
-                "eps": eps_from_k_distance(Z, min_samples),
+                "eps": eps_from_k_distance(model.Z_, min_samples),
                 "min_samples": min_samples,
             },
         }
+        if test_features is not None:
+            diagnostics[name]["heldout_latent_space"] = model.diagnose(test_features)
 
     rfm_cols_present = {"recency_days", "frequency", "monetary_raw", "monetary"}
     diagnostics["monetary_skew"] = (
@@ -654,6 +948,16 @@ def preprocessing_diagnostics(
         else None
     )
     diagnostics["category_selection"] = features.attrs.get("category_selection")
+
+    if test_features is not None:
+        split_attrs = features.attrs.get("split") or {}
+        diagnostics["split"] = {
+            "test_size": split_attrs.get("test_size"),
+            "random_state": split_attrs.get("random_state"),
+            "n_train_customers": len(features),
+            "n_test_customers": len(test_features),
+            "test_category_coverage": test_features.attrs.get("category_selection"),
+        }
 
     if verbose:
         _render_diagnostics(diagnostics)
