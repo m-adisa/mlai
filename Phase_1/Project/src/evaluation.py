@@ -1,6 +1,6 @@
 """Evaluation for Olist clustering results.
 
-Takes what clustering.run_clustering() returned and measures it. Three
+Takes what clustering.run_clustering() returned and measures it. Four
 independent checks, any of which can be run on its own:
 
 - internal_metrics: silhouette, Davies-Bouldin, Calinski-Harabasz
@@ -9,12 +9,23 @@ independent checks, any of which can be run on its own:
   designed for what DBSCAN produces.
 - stability: paired-subsample ARI with a full pipeline re-fit (Sec. 5.3),
   plus a structure-free null baseline (Sec. 5.3.4).
+- generalization: does the structure fitted on TRAIN customers hold for
+  held-out TEST customers? Two parts: the latent space (how much of the
+  test customers' variance the train PCA captures, per block) and the
+  clusters (test customers assigned to the train clusters, then scored and
+  compared with train).
 
 Same-space rule (Sec. 5.1.2, 6.1): Silhouette, DB, CH and DBCV are all
 distance-based, so values from different latent spaces ("mfa" vs
 "balanced") must not be ranked against each other. Compare algorithms
 inside one space. ARI stability is representation-agnostic but only says
 the partition is reproducible, not that it is useful (Sec. 6.1).
+
+Train/test protocol: `result` and `features` are always the TRAIN side
+(what run_clustering() was fitted on). Test customers are only ever
+projected with the train-fitted latent space and assigned with the
+train-fitted clusters; nothing is refitted on them (the one exception, the
+K-Means "refit ARI", is a yardstick and never labels a customer).
 
 Where this module goes beyond or adapts the doc:
 - DBCV runs on rescaled Z. The package returns an exact 0.0 when Z's
@@ -25,24 +36,34 @@ Where this module goes beyond or adapts the doc:
   default is squared Euclidean (the original MATLAB code).
 - DBCV on the full base is an estimate from random subsamples (Sec. 5.2.3
   requires subsampling: it is O(N^2)).
+- DBCV is called through a SciPy compatibility shim: SciPy >= 1.18 returns
+  float64 from rankdata(method="dense"), and dbcv uses those ranks as array
+  indices (IndexError). See _integer_ranks.
 - Stability aligns the two subsample labelings on customer_unique_id,
   because fit_latent_space drops incomplete customers inside each
   subsample, so array position is not a stable key.
+- Generalization does not report Calinski-Harabasz: it grows with the
+  number of points, so a smaller test set would look worse for no reason.
+  Silhouette and Davies-Bouldin are size-invariant.
 """
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Iterable, Mapping
 
 import dbcv as dbcv_package
 import numpy as np
 import pandas as pd
+import scipy.stats
+from sklearn.cluster import DBSCAN, KMeans
 from sklearn.metrics import (
     adjusted_rand_score,
     calinski_harabasz_score,
     davies_bouldin_score,
     silhouette_score,
 )
+from sklearn.neighbors import NearestNeighbors
 
 from src.clustering import (
     ALGORITHMS,
@@ -51,9 +72,17 @@ from src.clustering import (
     fit_dbscan,
     fit_kmeans,
 )
-from src.features import MIN_SAMPLES_MULTIPLIER, eps_from_k_distance, fit_latent_space
+from src.features import (
+    MIN_SAMPLES_MULTIPLIER,
+    LatentSpace,
+    eps_from_k_distance,
+    fit_latent_space,
+)
 
-EVALUATIONS = ("metrics", "dbcv", "stability")
+EVALUATIONS = ("metrics", "dbcv", "stability", "generalization")
+# What evaluate_clustering() runs when `run` is not given; "generalization"
+# is added to it only when test_features is passed.
+DEFAULT_EVALUATIONS = ("metrics", "dbcv", "stability")
 
 HIGH_NOISE_FRACTION = 0.5
 
@@ -65,6 +94,10 @@ DEFAULT_N_REPEATS = 20
 DEFAULT_SUBSAMPLE_FRAC = 0.80
 STABLE_MEAN_ARI = 0.75
 STABLE_SD_ARI = 0.05
+
+# Rule of thumb, not a test: below this many test points per cluster the
+# held-out numbers are noisy (the repeat-purchase track is the usual case).
+MIN_TEST_POINTS_PER_CLUSTER = 30
 
 # Columns fit_latent_space reads (category CLR columns are added by prefix).
 # Needed to build the structure-free null baseline.
@@ -189,6 +222,9 @@ def internal_metrics(
     Silhouette is O(n^2), so it is computed on a random sample of
     `silhouette_sample_size` points when there are more (None = never).
     Compare rows only within a space.
+
+    Also accepts the output of assign_test_clusters(), which scores the
+    held-out customers on their own.
     """
     rows = []
     for space, fitted in _filter(result, spaces, algorithms).items():
@@ -214,6 +250,37 @@ def internal_metrics(
 # ---------------------------------------------------------------------------
 
 
+@contextlib.contextmanager
+def _integer_ranks():
+    """Make scipy.stats.rankdata return integers for its integer methods.
+
+    dbcv relabels clusters with `rankdata(y, method="dense") - 1` and then
+    indexes arrays with the result. SciPy >= 1.18 returns float64 there, so
+    dbcv fails with "IndexError: only integers, slices ... are valid
+    indices". Dense/min/max/ordinal ranks are integers by definition, so
+    they are cast back for the duration of the call and scipy is restored
+    afterwards. A no-op on SciPy versions that already return integers.
+    """
+    original = scipy.stats.rankdata
+
+    def rankdata(a, method="average", *args, **kwargs):
+        ranks = original(a, method, *args, **kwargs)
+        if method in ("min", "max", "dense", "ordinal") and np.issubdtype(ranks.dtype, np.floating):
+            return ranks.astype(np.int64)
+        return ranks
+
+    scipy.stats.rankdata = rankdata
+    try:
+        yield
+    finally:
+        scipy.stats.rankdata = original
+
+
+def _dbcv_euclidean(X: np.ndarray, y: np.ndarray) -> float:
+    with _integer_ranks():
+        return dbcv_package.dbcv(X, y, metric="euclidean")
+
+
 def _dbcv_once(X: np.ndarray, y: np.ndarray, jitter_rng: np.random.Generator) -> tuple[float, bool]:
     """DBCV on one set of points; returns (value, jittered). NaN when fewer
     than two non-noise clusters of size >= 2 exist (the doc requires K >= 2;
@@ -222,14 +289,14 @@ def _dbcv_once(X: np.ndarray, y: np.ndarray, jitter_rng: np.random.Generator) ->
     if (counts >= 2).sum() < 2:
         return np.nan, False
     try:
-        return float(dbcv_package.dbcv(X, y, metric="euclidean")), False
+        return float(_dbcv_euclidean(X, y)), False
     except ValueError as error:
         if "Duplicated" not in str(error):
             raise
     # Exact duplicate customers make the core distance undefined; a tiny
     # jitter (1e-3 of the unit scale) separates them without moving structure.
     jittered = X + jitter_rng.normal(0.0, DBCV_JITTER, X.shape)
-    return float(dbcv_package.dbcv(jittered, y, metric="euclidean")), True
+    return float(_dbcv_euclidean(jittered, y)), True
 
 
 def dbcv_scores(
@@ -250,6 +317,9 @@ def dbcv_scores(
     full-population DBCV; noise stays in each subsample at its natural rate).
 
     DBCV is distance-based: compare rows only within a space.
+
+    Also accepts the output of assign_test_clusters(), which scores the
+    held-out customers on their own.
     """
     rng = np.random.default_rng(seed)
     rows = []
@@ -375,7 +445,7 @@ def stability(
 
     Args:
         features: the SAME feature table that was given to run_clustering()
-            (full base or repeat-only), not the latent space.
+            (the train table; full base or repeat-only), not the latent space.
         result: the run_clustering() output; supplies which spaces and
             algorithms exist and the K-Means k chosen on the full data.
         null_baseline: also run the identical procedure on a structure-free
@@ -452,6 +522,281 @@ def stability(
 
 
 # ---------------------------------------------------------------------------
+# GENERALIZATION: TRAIN-FITTED LATENT SPACE AND CLUSTERS ON HELD-OUT CUSTOMERS
+# ---------------------------------------------------------------------------
+
+
+def assign_kmeans(model: KMeans, Z_test: np.ndarray) -> np.ndarray:
+    """Nearest train centroid."""
+    return model.predict(Z_test)
+
+
+def assign_dbscan(model: DBSCAN, Z_test: np.ndarray) -> np.ndarray:
+    """Label of the nearest TRAIN core point within model.eps, else -1.
+
+    DBSCAN has no predict: its clusters are the connected components of core
+    points found in the data it was fitted on, so there is no model to apply
+    to a new point. This is DBSCAN's own border-point rule applied
+    inductively. Test points cannot become cores or merge clusters, so the
+    train clustering stays fixed, and eps / min_samples (derived on train)
+    are used as they are.
+    """
+    labels = np.full(len(Z_test), -1, dtype=int)
+    if len(model.core_sample_indices_) == 0:
+        return labels
+    core_labels = model.labels_[model.core_sample_indices_]
+    distance, index = NearestNeighbors(n_neighbors=1).fit(model.components_).kneighbors(Z_test)
+    inside = distance[:, 0] <= model.eps  # DBSCAN's neighborhood is closed: d <= eps
+    labels[inside] = core_labels[index[inside, 0]]
+    return labels
+
+
+def _rebuild_latent(train_features: pd.DataFrame, space: str, fitted: dict) -> LatentSpace:
+    """Refit the train latent space (deterministic) and check it reproduces
+    the Z in `result`, so `result` is guaranteed to come from
+    `train_features` and the projection uses the very same scalers / PCA."""
+    latent = LatentSpace(block_balance=SPACES[space]).fit(train_features)
+    same = (
+        latent.Z_.shape == fitted["Z"].shape
+        and np.array_equal(latent.customer_ids_, fitted["customer_ids"])
+        and np.allclose(latent.Z_, fitted["Z"])
+    )
+    if not same:
+        raise ValueError(
+            f"result[{space!r}] was not produced from the `features` given "
+            "(the rebuilt train latent space does not match its Z)."
+        )
+    return latent
+
+
+def assign_test_clusters(
+    train_features: pd.DataFrame,
+    test_features: pd.DataFrame,
+    result: Mapping,
+    spaces=None,
+    algorithms=None,
+) -> dict[str, dict]:
+    """Project test customers into each train latent space and assign them
+    to the train clusters. Nothing is refitted.
+
+    Returns a run_clustering()-shaped dict, {space: {Z, customer_ids,
+    latent_diagnostics, kmeans: {labels}, dbscan: {labels}}}, so
+    clustering.label_table(), internal_metrics() and dbcv_scores() all work
+    on it directly. latent_diagnostics is LatentSpace.diagnose(): train vs.
+    test numbers for the held-out latent space.
+    """
+    held_out = {}
+    for space, fitted in _filter(result, spaces, algorithms).items():
+        latent = _rebuild_latent(train_features, space, fitted)
+        Z_test, customer_ids = latent.transform(test_features)
+        entry = {
+            "Z": Z_test,
+            "customer_ids": customer_ids,
+            "latent_diagnostics": {"block_balance": latent.block_balance, **latent.diagnose(test_features)},
+        }
+        if "kmeans" in fitted:
+            entry["kmeans"] = {"labels": assign_kmeans(fitted["kmeans"]["model"], Z_test)}
+        if "dbscan" in fitted:
+            entry["dbscan"] = {"labels": assign_dbscan(fitted["dbscan"]["model"], Z_test)}
+        held_out[space] = entry
+    return held_out
+
+
+def _proportions(train_labels: np.ndarray, test_labels: np.ndarray) -> pd.DataFrame:
+    """Share of customers per cluster label, train vs. test (-1 = noise)."""
+    train = pd.Series(train_labels).value_counts(normalize=True).rename("train_share")
+    test = pd.Series(test_labels).value_counts(normalize=True).rename("test_share")
+    table = pd.concat([train, test], axis=1).fillna(0.0).sort_index()
+    table.index.name = "label"
+    return table
+
+
+def latent_generalization(
+    result: Mapping,
+    test_result: Mapping,
+    spaces=None,
+) -> pd.DataFrame:
+    """Held-out latent-space quality, train vs. test, per space.
+
+    The train PCA (d_star components) is applied to the test customers.
+    Rows per space: "overall", then one per block (rfm, category, extras).
+
+    - fraction_kept_*: share of the variance that survives the PCA cut. For
+      "overall" this is the realized variance; for a block it is the share
+      of that block's own variance kept in Z. A test value well below the
+      train value means the train axes do not describe new customers.
+    - share_in_Z_*: each block's share of the variance kept in Z.
+    - reconstruction_error_ratio (overall only): per-customer squared
+      reconstruction error on test over train; 1.0 = same, above 1 = worse.
+
+    Compare train and test within one space; spaces are not comparable.
+    """
+    rows = []
+    for space, fitted in _filter(result, spaces, None).items():
+        diag = test_result[space]["latent_diagnostics"]
+        block_variance = diag["block_variance"]
+        base = {
+            "space": space,
+            "n_train": len(fitted["Z"]),
+            "n_test": diag["n_customers_used"],
+            "n_test_excluded_missing_extras": diag["n_customers_excluded_missing_extras"],
+        }
+        realized = diag["realized_variance"]
+        rows.append({
+            **base,
+            "scope": "overall",
+            "fraction_kept_train": realized["train"],
+            "fraction_kept_test": realized["test"],
+            "fraction_kept_gap": realized["train"] - realized["test"],
+            "share_in_Z_train": np.nan,
+            "share_in_Z_test": np.nan,
+            "reconstruction_error_ratio": diag["reconstruction_error_ratio"],
+        })
+        for block, kept in block_variance["fraction_kept_in_Z"].items():
+            share = block_variance["share_in_Z"][block]
+            rows.append({
+                **base,
+                "scope": block,
+                "fraction_kept_train": kept["train"],
+                "fraction_kept_test": kept["test"],
+                "fraction_kept_gap": kept["train"] - kept["test"],
+                "share_in_Z_train": share["train"],
+                "share_in_Z_test": share["test"],
+                "reconstruction_error_ratio": np.nan,
+            })
+    return pd.DataFrame(rows)
+
+
+def cluster_generalization(
+    result: Mapping,
+    test_result: Mapping,
+    spaces=None,
+    algorithms=None,
+    silhouette_sample_size: int | None = DEFAULT_SILHOUETTE_SAMPLE_SIZE,
+    seed: int = 0,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Cluster generalization, train vs. test, per space and algorithm.
+
+    Returns (table, proportions):
+
+    table, one row per (space, algorithm); `basis` is "all points" for
+    K-Means and "non-noise points" for DBSCAN (as in internal_metrics):
+    - n_train / n_test: points scored; n_clusters_*: non-noise clusters.
+    - noise_fraction_*: DBSCAN only.
+    - silhouette_* / davies_bouldin_*: same sampling and seed on both sides;
+      silhouette_gap = train - test (positive = test is worse).
+    - size_tv_distance: total-variation distance between the train and test
+      cluster-size distributions (0 = identical, 1 = disjoint; noise counts
+      as its own category); max_abs_size_diff: its largest single cluster.
+    - train_clusters_empty_in_test: train clusters no test customer reached.
+    - inertia_per_point_ratio (K-Means): test over train mean squared
+      distance to the assigned centroid; 1.0 = same.
+    - refit_ari (K-Means): ARI between the train-model assignments of the
+      test customers and an independent K-Means fitted on test at the same
+      k. High = the train partition is what test would find on its own.
+      Not computed for DBSCAN: its eps depends on sample size, so an
+      independent test-only DBSCAN differs for reasons unrelated to
+      generalization.
+
+    proportions: long-format (space, algorithm, label, train_share,
+    test_share), the data behind the size-shift columns.
+
+    Calinski-Harabasz is deliberately omitted: it grows with n, so a smaller
+    test set would look worse without being worse.
+    """
+    rows, proportion_tables = [], []
+    for space, fitted in _filter(result, spaces, algorithms).items():
+        held = test_result[space]
+        Z_train, Z_test = fitted["Z"], held["Z"]
+        for algorithm in _algorithms_in(fitted):
+            if algorithm not in held:
+                continue
+            labels_train = fitted[algorithm]["labels"]
+            labels_test = held[algorithm]["labels"]
+            is_dbscan = algorithm == "dbscan"
+            keep_train = labels_train != -1 if is_dbscan else np.ones(len(labels_train), dtype=bool)
+            keep_test = labels_test != -1 if is_dbscan else np.ones(len(labels_test), dtype=bool)
+
+            sil_train, db_train, _ = _distance_metrics(
+                Z_train[keep_train], labels_train[keep_train], silhouette_sample_size, seed)
+            sil_test, db_test, _ = _distance_metrics(
+                Z_test[keep_test], labels_test[keep_test], silhouette_sample_size, seed)
+            n_clusters_train = len(np.unique(labels_train[keep_train]))
+            n_clusters_test = len(np.unique(labels_test[keep_test]))
+
+            table = _proportions(labels_train, labels_test)
+            diff = (table["train_share"] - table["test_share"]).abs()
+            empty = int(((table["train_share"] > 0) & (table["test_share"] == 0)).sum())
+
+            inertia_ratio, refit_ari = np.nan, np.nan
+            if algorithm == "kmeans":
+                model = fitted["kmeans"]["model"]
+                train_inertia = model.inertia_ / len(Z_train)
+                test_inertia = float((model.transform(Z_test).min(axis=1) ** 2).sum() / len(Z_test))
+                inertia_ratio = test_inertia / train_inertia
+                # Yardstick only: never used to label a customer.
+                refit_labels, _ = fit_kmeans(
+                    Z_test, fitted["kmeans"]["chosen_k"], n_init=model.n_init, seed=model.random_state
+                )
+                refit_ari = float(adjusted_rand_score(labels_test, refit_labels))
+
+            notes = []
+            if min(n_clusters_train, n_clusters_test) < 2:
+                notes.append("fewer than 2 clusters on one side: silhouette / Davies-Bouldin undefined")
+            if empty:
+                notes.append(f"{empty} train cluster(s) have no test customers")
+            if int(keep_test.sum()) < MIN_TEST_POINTS_PER_CLUSTER * max(n_clusters_test, 1):
+                notes.append(f"fewer than {MIN_TEST_POINTS_PER_CLUSTER} test points per cluster: noisy")
+
+            rows.append({
+                "space": space,
+                "algorithm": algorithm,
+                "basis": "non-noise points" if is_dbscan else "all points",
+                "n_train": int(keep_train.sum()),
+                "n_test": int(keep_test.sum()),
+                "n_clusters_train": n_clusters_train,
+                "n_clusters_test": n_clusters_test,
+                "noise_fraction_train": float((labels_train == -1).mean()) if is_dbscan else np.nan,
+                "noise_fraction_test": float((labels_test == -1).mean()) if is_dbscan else np.nan,
+                "silhouette_train": sil_train,
+                "silhouette_test": sil_test,
+                "silhouette_gap": sil_train - sil_test,
+                "davies_bouldin_train": db_train,
+                "davies_bouldin_test": db_test,
+                "size_tv_distance": float(0.5 * diff.sum()),
+                "max_abs_size_diff": float(diff.max()),
+                "train_clusters_empty_in_test": empty,
+                "inertia_per_point_ratio": inertia_ratio,
+                "refit_ari": refit_ari,
+                "note": "; ".join(notes),
+            })
+            proportion_tables.append(table.reset_index().assign(space=space, algorithm=algorithm))
+
+    proportions = (
+        pd.concat(proportion_tables, ignore_index=True)[["space", "algorithm", "label", "train_share", "test_share"]]
+        if proportion_tables
+        else pd.DataFrame(columns=["space", "algorithm", "label", "train_share", "test_share"])
+    )
+    return pd.DataFrame(rows), proportions
+
+
+def held_out_label_table(test_result: Mapping) -> pd.DataFrame:
+    """One row per held-out customer, one column per assignment, named
+    <space>_<algorithm> (same layout as clustering.label_table)."""
+    table = None
+    for space, held in test_result.items():
+        ids = held["customer_ids"]
+        if table is None:
+            table = pd.DataFrame({"customer_unique_id": ids})
+        elif not np.array_equal(table["customer_unique_id"].to_numpy(), ids):
+            raise ValueError(f"customer_ids in space {space!r} differ from the first space.")
+        for algorithm in ALGORITHMS:
+            if algorithm in held:
+                table[f"{space}_{algorithm}"] = held[algorithm]["labels"]
+    return table
+
+
+# ---------------------------------------------------------------------------
 # ENTRY POINT
 # ---------------------------------------------------------------------------
 
@@ -459,7 +804,7 @@ def stability(
 def evaluate_clustering(
     result: Mapping,
     features: pd.DataFrame | None = None,
-    run: str | Iterable[str] = EVALUATIONS,
+    run: str | Iterable[str] | None = None,
     spaces=None,
     algorithms=None,
     silhouette_sample_size: int | None = DEFAULT_SILHOUETTE_SAMPLE_SIZE,
@@ -470,23 +815,42 @@ def evaluate_clustering(
     null_baseline: bool = True,
     seed: int = 0,
     verbose: bool = True,
+    *,
+    test_features: pd.DataFrame | None = None,
 ) -> dict[str, pd.DataFrame]:
-    """Run any of the three evaluations on whatever run_clustering() fitted.
+    """Run any of the four evaluations on whatever run_clustering() fitted.
+
+    `result` and `features` are the TRAIN side. `run=None` runs "metrics",
+    "dbcv" and "stability", plus "generalization" when `test_features` is
+    given.
 
     Examples:
-        evaluate_clustering(result, feats)                           # all three
+        evaluate_clustering(result, feats)                           # metrics, dbcv, stability
         evaluate_clustering(result, run="metrics")                   # fast, no features needed
         evaluate_clustering(result, run=["metrics", "dbcv"])
         evaluate_clustering(result, feats, run="stability", spaces="balanced", algorithms="kmeans",
                             n_repeats=5, null_baseline=False)
+        evaluate_clustering(result, train_feats, run="generalization", test_features=test_feats)
 
-    `features` is required only for "stability" (it re-fits on subsamples).
-    Returns {"metrics": df, "dbcv": df, "stability": df} for what was run.
+    `features` is required for "stability" (it re-fits on subsamples) and
+    for "generalization" (the train latent space is rebuilt from it);
+    `test_features` is required for "generalization".
+
+    Returns a dict of DataFrames for what was run:
+        "metrics", "dbcv", "stability"
+        "generalization"        cluster generalization, one row per space/algorithm
+        "latent_generalization" held-out latent space, per space and block
+        "cluster_proportions"   cluster-size shares, train vs. test
+        "test_labels"           held-out customers' cluster assignments
     Compare rows only within a space (same-space rule).
     """
+    if run is None:
+        run = DEFAULT_EVALUATIONS + (("generalization",) if test_features is not None else ())
     selected = _names(run, EVALUATIONS, "run")
     if "stability" in selected and features is None:
         raise ValueError("`features` is required for run='stability'.")
+    if "generalization" in selected and (features is None or test_features is None):
+        raise ValueError("`features` (train) and `test_features` are required for run='generalization'.")
 
     output = {}
     if "metrics" in selected:
@@ -503,4 +867,12 @@ def evaluate_clustering(
             features, result, spaces, algorithms, n_repeats=n_repeats,
             subsample_frac=subsample_frac, null_baseline=null_baseline, seed=seed, verbose=verbose,
         )
+    if "generalization" in selected:
+        held_out = assign_test_clusters(features, test_features, result, spaces, algorithms)
+        output["generalization"], output["cluster_proportions"] = cluster_generalization(
+            result, held_out, spaces, algorithms,
+            silhouette_sample_size=silhouette_sample_size, seed=seed,
+        )
+        output["latent_generalization"] = latent_generalization(result, held_out, spaces)
+        output["test_labels"] = held_out_label_table(held_out)
     return output
