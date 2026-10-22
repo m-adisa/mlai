@@ -423,11 +423,6 @@ def compute_extras(
     return extras
 
 
-# ---------------------------------------------------------------------------
-# PUBLIC ENTRY POINT -- FEATURE TABLE
-# ---------------------------------------------------------------------------
-
-
 def build_customer_features(
     tables: dict[str, pd.DataFrame],
     target_spend_coverage: float = DEFAULT_TARGET_SPEND_COVERAGE,
@@ -560,6 +555,10 @@ def split_customers(
         stratify=is_repeat,
     )
     return train_ids, test_ids
+
+# ---------------------------------------------------------------------------
+# PUBLIC ENTRY POINT -- FEATURE TABLE
+# ---------------------------------------------------------------------------
 
 
 def build_train_test_features(
