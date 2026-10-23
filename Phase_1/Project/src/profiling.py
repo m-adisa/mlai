@@ -198,7 +198,8 @@ def _block_attribution(A: pd.DataFrame, labels: pd.Series, edges: np.ndarray) ->
     valid = total > 0
 
     result = pd.DataFrame({f"bva_{name}": part.where(valid) / total.where(valid) for name, part in parts.items()})
-    result["distance_from_center"] = np.sqrt(total)
+    typical = float(np.sqrt((A ** 2).sum(axis=1).mean()))   # a typical customer's own distance from the centre
+    result["distance_from_center"] = np.sqrt(total) / typical
 
     shares = result[[f"bva_{name}" for name in BLOCK_NAMES]].to_numpy()
     dominant = np.array(BLOCK_NAMES, dtype=object)[np.nan_to_num(shares, nan=-1.0).argmax(axis=1)]
