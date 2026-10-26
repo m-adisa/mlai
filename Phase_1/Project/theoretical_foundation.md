@@ -18,7 +18,7 @@ This document establishes the theoretical, mathematical, and algorithmic foundat
                                          │
                                          ▼
 +---------------------------------------------------------------------------------+
-| 3. Multi-Block Latent Space Mechanics (MFA & Variance-Guided SVD/PCA)           |
+| 3. Multi-Block Latent Space Mechanics (MFA, Block Balancing & SVD/PCA)          |
 +---------------------------------------------------------------------------------+
                                          │
                                          ▼
@@ -37,7 +37,7 @@ This document establishes the theoretical, mathematical, and algorithmic foundat
 +---------------------------------------------------------------------------------+
 ```
 
-> **Scope note.** Sections 1-5 describe the mathematics of each stage. Where a quantity is a heuristic (for example the 90% variance target, `d_max = 8`, or the ARI stability thresholds), the text says so explicitly: these are defaults to be calibrated, not theorems.
+> **Scope note.** Sections 1-5 describe the mathematics of each stage. Where a quantity is a heuristic (for example the 90% variance target, `d_max = 8`, or the ARI stability thresholds), the text says so explicitly: these are defaults to be calibrated, not theorems. Section 7.3 lists where this project's implementation deliberately differs from the reference outline of Section 7.1 (calibrated `d_max` and variance target, block balancing, held-out evaluation, DBCV numerics, missing-value handling).
 
 ---
 
@@ -205,7 +205,7 @@ After the non-linear transformations (`log1p` and CLR), features are organized i
 where:
 
 *   $`\mathbf{X}^{(1)} \in \mathbb{R}^{N \times p_1}`$: Financial/RFM block (Recency, Frequency, log1p Monetary).
-*   $`\mathbf{X}^{(2)} \in \mathbb{R}^{N \times p_2}`$: Category preference block (CLR-transformed 10-category share vector).
+*   $`\mathbf{X}^{(2)} \in \mathbb{R}^{N \times p_2}`$: Category preference block (CLR-transformed spend-share vector over the $`C`$ selected categories plus an `other` bucket, so $`p_2 = C + 1`$; $`C`$ is the smallest number of categories whose cumulative spend reaches a coverage target, 22 at 87% coverage in this project, rather than a fixed 10).
 *   $`\mathbf{X}^{(3)} \in \mathbb{R}^{N \times p_3}`$: Logistics & satisfaction block (mean delivery delay, review score).
 
 Within each block $`m`$, every column $`j \in \{1, \dots, p_m\}`$ is standardized by $`Z`$-score normalization:
@@ -288,6 +288,37 @@ Under the MFA weighting, the largest eigenvalue of every weighted block's scatte
 
 ---
 
+#### 3.2.4 Block Balancing (an extension beyond MFA)
+The guarantee of §3.2.3 is about each block's *dominant axis*. The total inertia of an MFA-weighted block is
+
+```math
+I_m = \big\| \alpha_m^{1/2}\, \tilde{\mathbf{X}}^{(m)} \big\|_F^2 = \sum_{i} \frac{\big(\sigma_i^{(m)}\big)^2}{\big(\sigma_1^{(m)}\big)^2} = \frac{p_m}{\bar{\lambda}_1^{(m)}}, \qquad \bar{\lambda}_1^{(m)} = \frac{\big(\sigma_1^{(m)}\big)^2}{N},
+```
+
+using $`\|\tilde{\mathbf{X}}^{(m)}\|_F^2 = N p_m`$ (each standardized column has squared norm $`N`$). Here $`\bar\lambda_1^{(m)} \in [1, p_m]`$ is the largest eigenvalue of the block's correlation matrix. When a block's columns are nearly uncorrelated, $`\bar\lambda_1^{(m)} \approx 1`$ and $`I_m \approx p_m`$: the block's total inertia is about its column count, and the imbalance of §3.1 reappears in full. A wide, flat-spectrum block (a CLR category block) can therefore hold most of the total variance even though MFA has equalized every block's first axis.
+
+**Block balancing** rescales every block to the same total inertia:
+
+```math
+\mathbf{A}_{\text{bal}} = \left[ \frac{\tilde{\mathbf{X}}^{(1)}}{\|\tilde{\mathbf{X}}^{(1)}\|_F} \;\middle|\; \frac{\tilde{\mathbf{X}}^{(2)}}{\|\tilde{\mathbf{X}}^{(2)}\|_F} \;\middle|\; \dots \;\middle|\; \frac{\tilde{\mathbf{X}}^{(K)}}{\|\tilde{\mathbf{X}}^{(K)}\|_F} \right], \qquad \|\tilde{\mathbf{X}}^{(m)}\|_F = \sqrt{N p_m}
+```
+
+Every block then has squared norm $`1`$, a $`1/K`$ share of the total variance. Applying this after MFA weighting gives the same matrix, because the factor $`\alpha_m^{1/2}`$ cancels: balancing **replaces** MFA's per-block scale rather than adding to it. The result is block scaling by the Frobenius norm as used in consensus PCA ([Westerhuis, Kourti & MacGregor, 1998](https://literature.learnche.org/item/95/analysis-of-multiblock-and-hierarchical-pca-and-pls-models)); it is not MFA and should not be reported as MFA.
+
+**Equal total variance is not equal influence.** After balancing, block $`m`$ spreads its share $`1/K`$ over roughly $`r_m^{\text{eff}} = \big(\sum_i \sigma_i^2\big)^2 / \sum_i \sigma_i^4`$ effective axes, so its variance per axis is of order $`1/(K\, r_m^{\text{eff}})`$. A block with few strong directions (RFM, extras) produces a few high-variance axes; a flat block with many directions (the category block) produces many weak ones. Global PCA and K-Means follow high-variance axes, and a global retention threshold (§3.3.1) removes the weakest axes first, so the category block is cut first.
+
+**Block retention.** Because the threshold in §3.3.1 is global, the information kept can differ greatly between blocks. With $`\mathbf{P} = \mathbf{V}_{d^*}\mathbf{V}_{d^*}^{T}`$ and $`(\cdot)^{(m)}`$ denoting the columns of block $`m`$, the pipeline reports
+
+```math
+\kappa_m = \frac{\big\|(\mathbf{A}\mathbf{P})^{(m)}\big\|_F^2}{\big\|\mathbf{A}^{(m)}\big\|_F^2}, \qquad \text{share of block } m \text{ in } \mathbf{Z} = \frac{\big\|(\mathbf{A}\mathbf{P})^{(m)}\big\|_F^2}{\|\mathbf{A}\mathbf{P}\|_F^2},
+```
+
+next to the realized variance, for both $`\mathbf{A}_{\text{MFA}}`$ and $`\mathbf{A}_{\text{bal}}`$.
+
+**Use.** The two matrices define two latent spaces, "mfa" (the baseline of §3.2) and "balanced" ($`\mathbf{A}_{\text{bal}}`$). The same-space rule of §5.1.2 applies between them: no distance-based metric may be compared across the two. The choice between them is a modelling decision about what the clustering should be driven by, justified by the block diagnostics above and by profiling (§6.2), not by metric values.
+
+---
+
 ### 3.3 Global Principal Component Analysis (PCA)
 After MFA weighting, dimensionality reduction is performed by SVD of the weighted matrix $`\mathbf{A}_{\text{MFA}} \in \mathbb{R}^{N \times P}`$ (where $`P = \sum_{m=1}^K p_m`$). Its columns are already centered because each block was standardized and then scaled:
 
@@ -304,13 +335,15 @@ The total variance in the MFA space is the trace of the covariance matrix:
 where $`\gamma_j`$ is the variance (eigenvalue) of global principal component $`j`$ and $`\sigma_j`$ are the singular values of $`\mathbf{A}_{\text{MFA}}`$.
 
 #### 3.3.1 Dynamic Retention Threshold & Dimensionality Cap
-Rather than selecting an arbitrary 2D or 3D subspace, the latent dimensionality $`d^*`$ is chosen as the smallest $`d_{90}`$ that preserves at least $`90\%`$ of the total variance, subject to an upper cap $`d_{\max} = 8`$:
+Rather than selecting an arbitrary 2D or 3D subspace, the latent dimensionality $`d^*`$ is chosen as the smallest $`d_\tau`$ that preserves at least a fraction $`\tau`$ of the total variance, subject to an upper cap $`d_{\max}`$:
 
 ```math
-d_{90} = \min \left\{ d \in \{1, \dots, P\} \;\middle|\; \frac{\sum_{j=1}^d \gamma_j}{\sum_{j=1}^P \gamma_j} \ge 0.90 \right\}, \qquad d^* = \min\left(d_{90},\, 8\right)
+d_{\tau} = \min \left\{ d \in \{1, \dots, P\} \;\middle|\; \frac{\sum_{j=1}^d \gamma_j}{\sum_{j=1}^P \gamma_j} \ge \tau \right\}, \qquad d^* = \min\left(d_{\tau},\, d_{\max}\right)
 ```
 
-The 90% target and the cap of 8 are heuristics. **When the cap binds ($`d_{90} > 8`$), the retained variance falls below 90%**, so the "$`\ge 90\%`$" fidelity is not guaranteed. The pipeline must therefore report the realized cumulative variance $`\sum_{j \le d^*}\gamma_j / \sum_j \gamma_j`$ every time. The cap mitigates the curse of dimensionality for distance-based clustering but trades away fidelity.
+The reference outline of §7.1 uses $`\tau = 0.90`$ and $`d_{\max} = 8`$. Both are heuristics. **When the cap binds ($`d_{\tau} > d_{\max}`$), the retained variance falls below $`\tau`$**, so the fidelity target is not guaranteed, and the pipeline must report the realized cumulative variance $`\sum_{j \le d^*}\gamma_j / \sum_j \gamma_j`$ every time. The cap mitigates the curse of dimensionality for distance-based clustering but trades away fidelity.
+
+The cap of 8 suits a category block of about ten columns. With a category block of 23 columns (§2.3) it bound hard during calibration, so this project sets $`\tau = 0.87`$ and $`d_{\max} = 26`$, a cap that never binds ($`d^* = 23`$ in the "mfa" space and $`19`$ in the "balanced" space). The two settings interact: the category coverage target sets the number of category columns, which sets $`d_\tau`$, so they were calibrated together and must be re-derived together if either changes. $`\tau`$ is a global threshold; how much of each block it keeps is reported separately (§3.2.4).
 
 #### 3.3.2 Projection into Reduced Latent Space
 The coordinate matrix $`\mathbf{Z} \in \mathbb{R}^{N \times d^*}`$ passed to the clustering algorithms is:
@@ -325,11 +358,11 @@ where $`\mathbf{V}_{d^*} \in \mathbb{R}^{P \times d^*}`$ contains the first $`d^
 Original Features (P = 15)
  [RFM (3) | CLR Categories (10) | Logistics (2)]
                         │
-                        ▼  (Block Standardization + MFA Weighting)
+                        ▼  (Block Standardization + MFA Weighting [+ Block Balancing, §3.2.4])
  Weighted Matrix A_MFA (N x 15)
                         │
                         ▼  (Global SVD / PCA)
- Latent Space Z (d* = min(d_90, 8); always report realized variance)
+ Latent Space Z (d* = min(d_tau, d_max); always report realized variance)
 ```
 
 ---
@@ -585,6 +618,24 @@ Stability is reported as the empirical mean and sample standard deviation of ARI
 
 A pipeline is treated as *operationally stable* if $`\overline{\text{ARI}} \ge 0.75`$ and $`s_{\text{ARI}} \le 0.05`$. These thresholds are **conventional heuristics, not statistical tests**. Calibrate them by running the identical procedure on a structure-free reference (for example, data with the same marginals but independently permuted columns) and requiring stability well above that null baseline. Subsample pairs overlap and share data, so $`s_{\text{ARI}}`$ understates true uncertainty.
 
+### 5.4 Held-Out Generalization
+Subsampling stability (§5.3) asks whether the structure survives resampling of the same data. A held-out test asks whether a fitted pipeline describes customers it has never seen.
+
+**Protocol.**
+1. Customers (never orders) are split into train and test, stratified on the repeat-purchase flag (frequency $`\ge 2`$) so that the repeat population is represented proportionally on both sides.
+2. Every fitted quantity is estimated on train only: the category set, the block standardization $`(\mu, \sigma)`$, $`\sigma_1^{(m)}`$ and the balancing norms, the PCA basis $`\mathbf{V}_{d^*}`$, $`k`$, $`\epsilon`$, $`\text{MinPts}`$, and the cluster models. Test customers pass through this frozen chain. (Contrast with §5.3.1, where re-fitting is the point.)
+3. K-Means assigns a test customer to the nearest train centroid. DBSCAN has no predict step, so a test point takes the label of its nearest train core point if that point lies within $`\epsilon`$, and is noise otherwise: DBSCAN's border-point rule applied inductively. Test points cannot become core points or merge clusters, so the train clustering stays fixed.
+
+**Diagnostics** (always compared within one space, §5.1.2):
+- *Latent space:* the realized variance and each block's retention $`\kappa_m`$ on train versus test, and the reconstruction-error ratio $`\rho = \text{err}_{\text{test}} / \text{err}_{\text{train}}`$ of the per-customer squared reconstruction error. $`\rho \approx 1`$ means the train axes describe new customers as well as the customers they were fitted on.
+- *Cluster quality:* the silhouette gap (train minus test) and Davies–Bouldin on both sides. Calinski–Harabasz is omitted because it grows with $`n`$, so train and test values are not comparable.
+- *Size shift:* the total-variation distance $`\text{TV} = \tfrac{1}{2}\sum_c \big|p_c^{\text{train}} - p_c^{\text{test}}\big|`$ between the train and test cluster-size distributions, with noise counted as a category.
+- *K-Means refit ARI:* the ARI between the train-model assignments of the test customers and an independent K-Means fitted on the test set at the same $`k`$. It is not computed for DBSCAN, whose $`\epsilon`$ depends on the sample size.
+
+**Reading.** Agreeing proportions with a low refit ARI mean that cluster sizes generalize but boundaries do not: the partition is not what the data would produce again. This is the held-out counterpart of a low subsampling ARI (§5.3.4).
+
+---
+
 ---
 
 ## 6. Controlled Comparison, Profiling & Business Attribution Architecture
@@ -742,7 +793,20 @@ mean_ari, sd_ari, _ = stability(df, category_share_cols, method="dbscan")
 | **Monetary Features** | $`\text{log1p}(x) = \ln(1+x)`$ | Compress heavy-tail variance; handle zero spend smoothly |
 | **Zero Handling** | Multiplicative replacement ($`\delta`$) | Make $`\ln`$ and the geometric mean defined; run a sensitivity analysis over $`\delta`$ |
 | **Category Features** | Centered Log-Ratio ($`\text{CLR}`$) | Remove the positive-sum constraint and use Aitchison geometry; residual zero-sum constraint remains (rank $`C-1`$) |
-| **Multi-Block Weighting** | $`\alpha_m = 1 / \lambda_1^{(m)}`$ (MFA) | Equalize each block's maximum directional variance; does not equalize total block variance |
-| **Dimensionality Reduction** | PCA/SVD, $`d^* = \min(d_{90}, 8)`$ | Target $`\ge 90\%`$ variance; the cap can lower it, so report realized variance |
+| **Multi-Block Weighting** | $`\alpha_m = 1 / \lambda_1^{(m)}`$ (MFA); optional block balancing $`1/\|\tilde{\mathbf{X}}^{(m)}\|_F`$ (§3.2.4) | MFA equalizes each block's maximum directional variance but not its total; balancing equalizes totals, replaces MFA's scale, and gives two spaces that must not be compared with each other |
+| **Dimensionality Reduction** | PCA/SVD, $`d^* = \min(d_{\tau}, d_{\max})`$ | Target $`\ge \tau`$ variance; the cap can lower it, so report realized variance and per-block retention $`\kappa_m`$ |
 | **DBSCAN Diagnostic** | $`k`$-distance elbow (max curvature) | Heuristic estimate of $`\epsilon`$ in $`d^*`$-space; check sensitivity to $`\epsilon`$ and $`\text{MinPts}`$ |
 | **Validation Architecture** | Same-space DBCV / silhouette; ARI subsampling | Prevent cross-space metric comparison; ARI measures reproducibility (necessary, not sufficient) |
+| **Held-Out Evaluation** | Train-only fit, frozen transform, nearest-centroid / nearest-core-point assignment | Show that the latent space and the clusters describe unseen customers; compare train and test within one space (§5.4) |
+
+### 7.3 Implementation Notes: Where the Project Differs from the Reference Outline
+The outline of §7.1 is illustrative. The implementation deliberately differs from it as follows.
+
+1. **Two latent spaces.** "mfa" (§3.2) and "balanced" (§3.2.4). Everything downstream (clustering, evaluation, profiling) runs per space and never compares across spaces.
+2. **Calibrated settings.** $`\tau = 0.87`$ and $`d_{\max} = 26`$ instead of $`0.90`$ and $`8`$ (§3.3.1). The category set is the smallest set reaching 87% of spend (22 categories plus `other`) instead of a fixed ten.
+3. **Missing values are not imputed.** Average review score and delivery delay are undefined for some customers. The outline's "impute NaNs beforehand" is not followed; MFA and PCA are fitted on complete cases, and customers missing either value are not clustered (325 of 51,346 train and 286 of 42,012 test customers). This is a selection effect to bear in mind when interpreting results.
+4. **Held-out protocol** (§5.4); the category set is also selected on train only.
+5. **DBCV numerics.** The `dbcv` package returns exactly $`0`$ when $`\mathbf{Z}`$ is on a very small scale although DBCV is scale invariant in theory, so $`\mathbf{Z}`$ is divided by one global constant first (geometry unchanged). Distances are Euclidean (the package default is squared Euclidean). Large populations are scored as the mean and standard deviation of 5 random subsamples of 5,000 points (an estimate, not the exact DBCV); exact duplicate points are separated by a jitter of $`10^{-3}`$ on the unit scale; the value is undefined (NaN) with fewer than two non-noise clusters. A small shim restores integer ranks for SciPy versions where `rankdata` returns floats.
+6. **Stability design.** Pairs are aligned on `customer_unique_id` because incomplete customers are dropped inside each subsample. A structure-free null baseline (every latent column permuted independently) runs through the same procedure. The number of pairs was reduced from the 20 of §5.3.4 to 7 (full base) and 9 (repeat customers) for runtime, which widens the uncertainty of the reported mean and standard deviation.
+7. **Choosing $`k`$.** The silhouette-optimal $`k`$ is not necessarily a reproducible partition. The sensitivity analysis therefore reports silhouette, stability margin over the null baseline, and refit ARI for each $`k`$ rather than trusting the silhouette optimum alone.
+8. **Profiling.** Route A uses the relative deviation ratio with the fallback cascade IQR, then MAD, then none (no spread, deviation left empty). Two rate features are derived: `repeat_buyer` (frequency $`\ge 2`$) and `multi_category` (two or more category columns with spend), reported as rate differences in proportion points. Category shares are reported as mean-share differences. The population baseline is the same side's own population (train against train, test against test). DBSCAN noise is profiled as its own group. Block attribution is computed in the space that was clustered. Route B (§6.2.1) is not implemented.
