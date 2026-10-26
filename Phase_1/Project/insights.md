@@ -1,209 +1,152 @@
-# Project 1.2 — Experiment Insights
+# Project 1.2: Experiment Insights
 
 ## Purpose
 
-This experiment is not primarily about producing customer segments. It tests how customer representation, feature-space geometry, clustering method, and dataset population affect the structure we discover.
+This experiment is not mainly about producing customer segments. It asks whether the structure that K-Means and DBSCAN find in Olist customers is **real, reproducible, interpretable and useful**, and how much of it depends on representation, algorithm and population. The method is in [`theoretical_foundation.md`](theoretical_foundation.md); how to run it is in the [README](README.md). This file reports what came out.
 
-The central chain is:
+## Summary
 
-`raw marketplace data → behavioral representation → feature geometry → clustering → validation → interpretation → business use`
+- **One structure is solid, and it is a known split:** repeat buyers (3.0% of customers) versus one-time buyers. K-Means isolates them as a 3.0% cluster at every k from 3 to 6, and DBSCAN finds them as two dense clusters separated by spend. This was recovered, not discovered: frequency is a direct input.
+- **One weak structure:** among one-time buyers, an experience axis. K-Means at k=3 puts 17.7% of customers in a group with a median review score of 1 and later deliveries. The group's boundary is not reproducible at k=3, and the split follows the review-score distribution rather than a joint structure.
+- **No density-separated groups among one-time buyers.** DBSCAN keeps 99.8% of them in one cluster at the derived eps and at 0.75 times it. Tighter eps splits them, but with negative DBCV.
+- **Repeat customers alone show no reproducible discrete structure.**
+- **Reading:** the data support continuous scores (review and delivery experience, spend, repeat status) better than hard segments, apart from the repeat split.
+- **Representation:** the balanced latent space was chosen because MFA left the category block with 83% of the variance, but the choice costs category information (section 2).
 
-The experiment should therefore be read as an investigation into **whether the discovered customer structure is real, stable, interpretable, and useful**.
+## How to read the numbers
 
----
+All numbers come from the final notebook run: balanced space, train customers (51,021 full base, 1,537 repeat) unless stated, held-out customers 41,726 and 1,255. Stability used 7 subsample pairs on the full base and 9 on repeat customers, fewer than the 20 recommended, so its means and standard deviations are rough. Numbers marked **†** come from an exploratory script run before the train/test split, at earlier settings (coverage and variance target 0.90, 92,747 customers). The notebook does not reproduce them.
 
-## 1. Technical Perspective
+## 1. Representation: why the balanced space
 
-### 1.1 Population
+Customer behaviour is described by three blocks: RFM (3 columns), category spend shares (23 columns after CLR: 22 categories plus `other`) and marketplace experience (2 columns, review score and delivery delay).
 
-The experiment runs on two populations:
+| Train, latent space | Block shares before PCA (rfm / category / extras) | Shares in Z | Share of each block kept after PCA | d* | Realized variance |
+|---|---|---|---|---|---|
+| mfa | 10.7% / **82.7%** / 6.5% | 6.9% / 88.4% / 4.7% | 57.5% / 94.9% / 63.7% | 23 | 0.888 |
+| balanced | 33.3% / 33.3% / 33.3% | 37.7% / 24.6% / 37.7% | 99.9% / 65.4% / 100% | 19 | 0.884 |
 
-- **Full base:** all customers.
-- **Repeat customers:** customers with ≥2 orders.
+- **MFA barely changed the scale:** the three blocks' first singular values are 243.6, 242.7 and 254.6, so MFA divides every block by almost the same number. It equalizes each block's first axis, not its total variance, so the 23-column category block keeps 83% of the variance. PCA makes it worse: the retained space is 88% category and the RFM block loses 42% of its own variance.
+- **Balancing fixes the totals but moves the cost:** every block gets a third before PCA, RFM and extras are kept almost completely, and the category block keeps 65% of its variance. Equal total variance is not equal influence (theory §3.2.4): category variance is spread across many weak axes.
+- **Exploratory evidence†:** 97.6% of customers had spend in a single category, with 2,212 distinct category compositions overall; K-Means clusters (k=8) lined up strongly with the dominant category in the MFA space (normalized mutual information 0.70) and hardly at all in the balanced space (0.02). In the balanced space they lined up instead with recency (0.25), review score (0.23) and repeat status (0.13).
+- **The balanced space generalizes to held-out customers:** realized variance 0.884 on train and 0.887 on test, block shares within about one point, reconstruction-error ratio 0.989.
+- **Not done:** clustering in the MFA space was never completed on the final settings (the run crashed), so the two spaces are not compared on clustering results. The case for balanced rests on the block diagnostics and the exploratory check.
+- **Monetary skew:** `log1p` reduces it from 7.47 to 0.52; the largest customer spends about 42 times the 75th percentile.
 
-Questions:
+## 2. What structure exists
 
-- Does the customer population materially change the structure discovered?
-- Does frequency become a meaningful separator once we restrict the analysis to repeat customers?
-- Which behavioral dimensions drive segmentation in each population?
+### Full base (balanced space)
 
-A difference between the two tracks is not a problem to eliminate. It is a result to explain.
+**K-Means, k chosen by silhouette (k=3):** three groups of 3.0%, 17.7% and 79.3% of customers.
 
-### 1.2 Representation
+| Cluster | Share | What it is (Route A profile) |
+|---|---|---|
+| 0 | 3.0% (1,537 customers) | All repeat buyers; median spend 223 against 108 for everyone; about 55% buy in more than one category |
+| 1 | 17.7% | One-time buyers with a median review score of 1 (population 5) and deliveries about 5 days later than the population median |
+| 2 | 79.3% | Ordinary one-time buyers, close to the population on every feature |
 
-Customer behavior is represented through three blocks:
+**DBSCAN (eps 0.0079, min_samples 38):** 96.9% in one dense cluster that looks like the population; two small clusters of 2.8% and 0.19% that are essentially all repeat buyers, the second with much higher spend; and 0.15% noise.
 
-- RFM
-- Category preference
-- Marketplace experience
+| DBSCAN group | Share | Profile |
+|---|---|---|
+| cluster 0 | 96.9% | The population |
+| cluster 1 | 2.8% | Repeat buyers, more multi-category, higher spend |
+| cluster 2 | 0.19% | Repeat buyers, highest spend |
+| noise | 0.15% | Outliers: very late deliveries, low reviews, high spend |
 
-Questions:
+Together clusters 1 and 2 make 2.98%, the repeat-buyer share. Both algorithms recover the repeat split. The category shares of DBSCAN's small clusters did not generalize to held-out customers (correlation of train and test deviations 0.42), so they are not interpreted.
 
-- Which behavioral dimensions actually distinguish customers?
-- Does category preference contribute meaningful separation beyond RFM?
-- Do review and delivery behavior reveal structure that purchasing behavior alone misses?
-- Are apparent clusters driven by one feature block or by several?
+### Repeat customers (balanced space)
 
-The purpose of MFA is to prevent the 11-dimensional category block from dominating the 3-dimensional RFM and 2-dimensional extras blocks purely because it contains more variables.
+K-Means at k=3 gives 20.1% with a median review score of 3.0 and later deliveries, 72.3% satisfied customers, and 7.6% of higher spenders (median 371 against 223) who buy in more than one category. DBSCAN finds a single cluster (99.0%) plus 1.0% noise, whose members are high spenders.
 
-### 1.3 Feature geometry
+## 3. How dependent is it on modelling choices
 
-Preprocessing is part of the experiment, not merely housekeeping.
+**Choice of k (full base).** The silhouette-optimal k is the least reproducible one.
 
-- `log1p` tests whether reducing monetary skew produces more useful geometry.
-- CLR makes category-share comparisons appropriate for Euclidean methods.
-- Standardization puts variables within each block on comparable scales.
-- MFA balances the contribution of feature blocks.
-- PCA tests whether a lower-dimensional representation preserves useful structure.
+| k | Silhouette | Stability ARI | Null ARI | Margin over null | Refit ARI |
+|---|---|---|---|---|---|
+| 2 | 0.261 | 0.995 | 1.000 | -0.005 | 0.989 |
+| 3 | **0.282** | 0.719 | 0.913 | **-0.193** | **0.337** |
+| 4 | 0.156 | 0.985 | 0.859 | +0.126 | 0.972 |
+| 5 | 0.140 | 0.986 | 0.901 | +0.086 | 0.960 |
+| 6 | 0.142 | 0.982 | 0.971 | +0.010 | 0.929 |
 
-Questions:
+- At k=2 the null baseline is as stable as the data, so the split proves nothing about joint structure. My reading, not tested: it follows the review-score distribution.
+- At k=4 and 5 the partitions reproduce (refit ARI 0.96 to 0.97) and beat the null by 0.09 to 0.13, but silhouette is low (0.14 to 0.16) and the groups are weakly separated. They were not profiled, so what the extra clusters are is unknown.
+- At k=3 the partition is unstable (refit ARI 0.34) even though cluster sizes and silhouette hold up on held-out customers.
 
-- Does the structure survive dimensionality reduction?
-- Does PCA remove noise or remove meaningful behavioral information?
-- Does clustering change materially between the MFA-weighted space and the MFA+PCA space?
+**Choice of eps (DBSCAN, full base).**
 
-### 1.4 K-Means vs DBSCAN
+| eps relative to derived | Clusters | Noise | DBCV | One-time buyers in the largest cluster |
+|---|---|---|---|---|
+| 0.5 | 4 | 3.2% | -0.163 | 92.8% |
+| 0.75 | 3 | 0.4% | +0.385 | 99.8% |
+| 1.0 | 3 | 0.2% | +0.322 | 99.9% |
 
-K-Means and DBSCAN make different assumptions about structure.
+Tighter eps splits the one-time buyers into three groups of at least 1%, but DBCV turns negative, so the splits are not density-supported.
 
-Questions:
+**Population.** The repeat-only track has no reproducible K-Means structure (refit ARI 0.56 to 0.72 for k of 3 and above; margins over null between -0.02 and +0.10, within the null's own spread) and DBSCAN finds one cluster at every eps tried. The split that dominates the full base is absent once frequency no longer varies.
 
-- Does density-based clustering find materially different structure from centroid-based clustering?
-- Does DBSCAN identify meaningful outliers/noise that K-Means is forced to assign to a cluster?
-- Are apparent K-Means clusters actually compact/convex groups, or does the data contain irregular density structure?
-- How sensitive are the results to the representation and dimensionality?
+**Not tested:** the MFA space on final settings, other values of the category and variance targets, DBSCAN `min_samples`, the CLR zero-replacement constant.
 
-DBSCAN should be interpreted using DBCV alongside the common clustering metrics rather than forcing it into K-Means' geometric assumptions.
+## 4. How reliable is it
 
-### 1.5 Validation
+| Full base, balanced | K-Means (k=3) | DBSCAN |
+|---|---|---|
+| Silhouette (train / held-out) | 0.282 / 0.297 | 0.425 / 0.428 (non-noise points) |
+| DBCV (5 subsamples of 5,000) | -0.825 ± 0.076 | **+0.285 ± 0.062** |
+| Stability ARI (7 pairs) vs null | 0.719 ± 0.347 vs 0.913 ± 0.231 | 0.9986 vs 0.9979 |
+| Held-out cluster sizes (total-variation distance) | 0.0007 | 0.0002 |
+| Refit ARI | 0.337 | not computed |
 
-The experiment uses:
+- **K-Means:** sizes and quality hold on held-out customers, but the partition is not reproducible and is at or below the null baseline. DBCV is strongly negative, so the clusters are not density-separated.
+- **DBSCAN:** DBCV is positive, so a dense mass with separated small groups exists. Its stability looks perfect only because 97% of customers sit in one cluster; the null scores the same.
+- **Repeat track:** K-Means ARI 0.898 against a null of 0.896; DBSCAN 0.737 against 0.836 and a single cluster, so its metrics are undefined.
 
-- Silhouette
-- Davies-Bouldin
-- Calinski-Harabasz
-- DBCV for DBSCAN
-- Cluster profiling
-- PCA visualization
-- Stability through repeated subsampling and ARI
+Verdict by claim:
 
-The goal is not to find a single universally "best" score.
+| Claim | Evidence |
+|---|---|
+| Repeat versus one-time buyers is a structure of the data | Strong: isolated by both algorithms, profile and held-out agree (train-test correlation of deviations 0.99) |
+| Spend tiers within repeat buyers (DBSCAN) | Moderate on the full base (DBCV positive); not tested elsewhere |
+| A low-review, late-delivery group among one-time buyers | Weak: appears in K-Means at k=3 and 2, but the boundary is not reproducible |
+| Discrete segments beyond the repeat split | Not supported |
+| Category-based segments | Not evaluated in the balanced space; category is down-weighted there |
 
-Questions:
+## 5. What explains the structure
 
-- Do multiple metrics tell a consistent story?
-- Where do metrics disagree?
-- Does a statistically attractive solution produce interpretable segments?
-- Are the clusters stable under changes to the sampled data?
-- Does the same structure repeatedly emerge when parameters are re-derived?
+- **Spending and purchase frequency (the RFM block) drive the repeat split:** block attribution puts about 99.7% of the separation of the repeat clusters in the RFM block.
+- **Experience (review score and delivery delay) drives the unhappy group and the DBSCAN noise group:** the noise group splits roughly evenly between the RFM and experience blocks.
+- **Category is not a driver in the balanced space.** That is partly by construction: the block is rescaled to a third of the variance and only 65% of it survives PCA. The balanced space cannot say whether category-based segments exist.
+- **`multi_category` is partly mechanical:** repeat buyers have more orders and so more chances to buy in several categories.
 
-A cluster that is strong on one metric but unstable or uninterpretable should be treated differently from one that performs consistently across these checks.
+## 6. What the business can do with it
 
-### 1.6 Stability
+The experiment shows behavioural differences. It does not show that a segment responds to an intervention. Each item below is a hypothesis to test.
 
-The 20-run subsampling experiment tests whether the discovered structure is dependent on the exact observations used.
+| Observed | Hypothesis | Test |
+|---|---|---|
+| About 3% of customers are repeat buyers, with higher spend and broader categories | Repeat purchase is rare and worth encouraging | Measure the second-order rate under a retention intervention |
+| About 18% of one-time buyers give low reviews and receive later deliveries | Poor delivery experience cuts repeat purchase; recovery contact helps | Rank by review score and delivery delay, not cluster membership (the cluster is unstable), then run a recovery test and measure reorders |
+| 0.15% of customers combine very late deliveries, low reviews and high spend | A small escalation list worth handling by hand | Review the list and track outcomes |
 
-Interpretation:
+- **Treat repeat status as the main lifecycle split.** It is a direct feature, not a model discovery.
+- **Prefer continuous scores to hard segments.** Review and delivery experience and spend are better used as scores than as cluster labels.
+- **Do not target by category from these results.** The category dimension was not usefully tested.
+- **Observational data.** The groups describe past behaviour; nothing here is causal.
 
-- **High ARI:** the structure is relatively stable under sampling variation.
-- **Low ARI:** the segmentation is sensitive to the sampled population and should be interpreted cautiously.
+## 7. Limitations and what was not done
 
-For DBSCAN, noise is treated as a legitimate label in the stability comparison rather than silently discarded.
+- Stability used 7 and 9 subsample pairs instead of 20, and pairs share data, so its spread is understated.
+- The null baseline is strong at low k (ARI 0.91 at k=3, 1.00 at k=2). My inference is that K-Means on shuffled data splits along the strongest marginals; this was not tested.
+- K-Means was profiled at k=3 only. k=4 and k=5 have the best reproducibility and were not profiled.
+- A one-time-buyers-only track was not run, so structure inside that 97% beyond the review and delivery axis is untested.
+- Clustering in the MFA space was never completed on the final settings, so there is no clustering comparison between the two spaces.
+- Not run: the δ sweep for CLR zero-replacement, DBSCAN `min_samples` sensitivity, a repeated train/test split (one split, seed 42), external validation variables such as customer state or payment type, and Route B profiling.
+- Customers without a review score or delivery date are not clustered (325 train, 286 held-out), a selection effect.
+- Olist is a Brazilian marketplace from 2016 to 2018; nothing here is tested elsewhere.
 
----
+## 8. Conclusion
 
-## 2. Business / Product Perspective
-
-The technical experiment ultimately asks whether the customer population contains **behaviorally meaningful groups that could support different product or commercial decisions**.
-
-### 2.1 Segment meaning
-
-For every resulting cluster, ask:
-
-- Who are these customers?
-- How frequently do they purchase?
-- How much do they spend?
-- What categories do they prefer?
-- What is their marketplace experience?
-- How distinct are they from the other groups?
-
-The segment profile should describe behavior, not assign arbitrary personas.
-
-### 2.2 Commercial interpretation
-
-The clusters can potentially support questions such as:
-
-- Which customers represent high-value purchasing behavior?
-- Which customers are infrequent but valuable?
-- Which customers are highly concentrated in particular categories?
-- Which groups show different delivery or review experiences?
-- Which customer groups might warrant different retention, targeting, or product strategies?
-
-The experiment does **not** establish that a segment will respond to an intervention. It establishes behavioral differences that can be used to formulate those product questions.
-
-### 2.3 Full base vs repeat customers
-
-This comparison is especially important commercially.
-
-If segmentation changes substantially between the full base and repeat customers, then the marketplace may contain fundamentally different behavioral regimes:
-
-- acquisition/one-time purchasing behavior
-- repeat purchasing behavior
-
-That can influence how future product analytics are structured. A single segmentation model may not adequately represent both populations.
-
-### 2.4 From segmentation to product decisions
-
-A useful segment should eventually connect:
-
-`segment → observed behavior → business hypothesis → intervention → measurable outcome`
-
-For example:
-
-`high category concentration → targeted category experience → measure repeat purchase`
-
-The clustering experiment itself does not prove the intervention works. That requires a subsequent experiment.
-
-### 2.5 What would make the result valuable?
-
-The experiment produces meaningful value if it can establish some combination of:
-
-1. **Distinctiveness** — customer groups differ materially in behavior.
-2. **Stability** — those groups persist under reasonable sampling variation.
-3. **Interpretability** — the differences can be explained through the engineered feature blocks.
-4. **Method sensitivity** — the experiment reveals how representation or algorithm choice changes the discovered structure.
-5. **Business relevance** — the resulting groups correspond to decisions that the product or business could actually make.
-
-A failure to find strong, stable clusters is also a useful result. It may indicate that the chosen behavioral representation does not contain strong segmentation structure, or that the customer base is better understood through another modeling approach.
-
----
-
-## 3. How to Read the Final Result
-
-The final conclusion should not be:
-
-> "K-Means produced X clusters, therefore these are the customer segments."
-
-Instead, answer five questions:
-
-### 1. What structure exists?
-
-What behavioral groups, if any, consistently appear?
-
-### 2. How dependent is that structure on modeling choices?
-
-Does it survive changes in population, dimensionality reduction, and clustering method?
-
-### 3. How reliable is it?
-
-Do validation metrics and stability analysis support the existence of the structure?
-
-### 4. What explains the structure?
-
-Which RFM, category, and marketplace-experience dimensions distinguish the groups?
-
-### 5. What can the business do with it?
-
-Which concrete targeting, retention, product, or marketplace questions could the segments inform?
-
-The strongest outcome is therefore not simply a high clustering score. It is a **stable, interpretable behavioral structure whose differences can be connected to plausible business decisions**.
+Following the null-finding rule of theory §6.2.4: the Olist customer base contains one reproducible structure, repeat versus one-time buyers with spend tiers among the repeat buyers, and no reproducible discrete segments beyond it. Review and delivery experience form a weak, continuous axis among one-time buyers that is better used as a score than as a cluster. The result does not mean no structure exists: the category dimension was down-weighted, the structure inside one-time buyers was tested only partly, and the MFA space was never clustered. It does mean that K-Means with a silhouette-chosen k should not be presented as "the customer segments".
