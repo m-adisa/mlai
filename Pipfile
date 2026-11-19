@@ -17,6 +17,7 @@ kneed = "*"
 jupyter = "*"
 ipywidgets = "*"
 dbcv = {git = "https://github.com/FelSiq/DBCV"}
+nnfs = "*"
 
 [dev-packages]
 ipykernel = "*"
